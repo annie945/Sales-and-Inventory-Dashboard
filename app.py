@@ -84,8 +84,9 @@ elif page == "💰 Sales Performance":
         df_sales.columns = [str(c).strip().lower() for c in df_sales.columns]
         df_sales['date'] = pd.to_datetime(df_sales['date']).dt.date
         
-        # Filter out items we don't want to see
+        # Filter out items
         df_sales = df_sales[~df_sales['sku'].str.contains('unknown|worry-free delivery', case=False, na=False)]
 
-        # Filter for the current selected range
-        mask = (df_sales['date'] >= start_date) & (df
+        # Filter Date Range (Fixed Syntax)
+        mask = (df_sales['date'] >= start_date) & (df_sales['date'] <= end_date)
+        curr_data = df
