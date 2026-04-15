@@ -69,7 +69,3 @@ if page == "📦 Inventory Overview":
 # --- PAGE 2: SALES PERFORMANCE ---
 elif page == "💰 Sales Performance":
     st.title("Sales Analysis")
-    region = st.selectbox("Select Region:", list(SALES_GIDS.keys()))
-    
-    st.write("### 📅 Select Date Range")
-    col_d1, col_d
