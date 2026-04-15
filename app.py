@@ -1,52 +1,71 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(layout="wide", page_title="Global Inventory Dashboard")
+st.set_page_config(layout="wide", page_title="SKU Stock Dashboard")
 
-# 1. YOUR BASE LINK (Everything before /edit)
-# Make sure this ID matches yours: 1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs
+# 1. Base URL & Tab ID (Shopify Tab)
 base_url = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
-
-# 2. YOUR TAB ID (GID) 
-# Replace the number below with the GID you copied in Step 1
 gid_number = "0" 
-
-# 3. Create the direct download link
 direct_url = f"{base_url}/export?format=csv&gid={gid_number}"
 
 @st.cache_data(ttl=300)
 def load_data():
-    # We use error_bad_lines=False just in case your sheet has messy formatting
+    # We load the data and skip the first few empty/header rows if necessary
+    # Based on your sheet, Column A (index 0) is usually the SKU name
     return pd.read_csv(direct_url)
 
 try:
     df = load_data()
 
-    st.markdown("<h2 style='text-align: center;'>📦 Global Stock Levels</h2>", unsafe_allow_html=True)
+    st.title("📦 SKU Stock Breakdown")
     st.write("---")
 
-    m1, m2, m3, m4, m5 = st.columns(5)
+    # 2. Market Selection Pills (Like your original image!)
+    market = st.radio(
+        "Select Market to view SKU Details:",
+        ["🇺🇸 US", "🇨🇦 CA", "🇬🇧 UK", "🇦🇺 AU", "🇪🇺 EU"],
+        horizontal=True
+    )
 
-    # Columns H(7), P(15), W(22), AD(29), AM(38)
-    with m1:
-        val = pd.to_numeric(df.iloc[:, 7], errors='coerce').sum()
-        st.metric("🇺🇸 US Shopify", f"{int(val):,}")
-    with m2:
-        val = pd.to_numeric(df.iloc[:, 15], errors='coerce').sum()
-        st.metric("🇨🇦 CA Shopify", f"{int(val):,}")
-    with m3:
-        val = pd.to_numeric(df.iloc[:, 22], errors='coerce').sum()
-        st.metric("🇬🇧 UK Shopify", f"{int(val):,}")
-    with m4:
-        val = pd.to_numeric(df.iloc[:, 29], errors='coerce').sum()
-        st.metric("🇦🇺 AU Shopify", f"{int(val):,}")
-    with m5:
-        val = pd.to_numeric(df.iloc[:, 38], errors='coerce').sum()
-        st.metric("🇪🇺 EU Shopify", f"{int(val):,}")
+    # Map the selection to your specific columns
+    # Column A=0(SKU), H=7(US), P=15(CA), W=22(UK), AD=29(AU), AM=38(EU)
+    market_map = {
+        "🇺🇸 US": 7,
+        "🇨🇦 CA": 15,
+        "🇬🇧 UK": 22,
+        "🇦🇺 AU": 29,
+        "🇪🇺 EU": 38
+    }
+    
+    selected_col = market_map[market]
 
-    st.success("System Live & Connected!")
+    # 3. Create a clean Dataframe for the selected market
+    # We take Column 0 (SKU Name) and the selected Market Column
+    sku_stock = df.iloc[:, [0, selected_col]].copy()
+    sku_stock.columns = ["SKU Name", "Current Stock"]
+    
+    # Clean up: Remove empty rows or rows where SKU is missing
+    sku_stock = sku_stock.dropna(subset=["SKU Name"])
+    sku_stock["Current Stock"] = pd.to_numeric(sku_stock["Current Stock"], errors='coerce').fillna(0).astype(int)
+
+    # 4. Display the Data
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader(f"Total {market} Stock")
+        st.header(f"{sku_stock['Current Stock'].sum():,}")
+        st.info("Top 5 SKUs by Stock Level")
+        st.table(sku_stock.nlargest(5, "Current Stock"))
+
+    with col2:
+        st.subheader("Full SKU List")
+        # Search box to find a specific SKU quickly
+        search = st.text_input("🔍 Search SKU Name:")
+        if search:
+            sku_stock = sku_stock[sku_stock["SKU Name"].str.contains(search, case=False)]
+        
+        st.dataframe(sku_stock, use_container_width=True, height=500)
 
 except Exception as e:
-    st.error("Connection Failed")
-    st.write("Check if your Google Sheet is set to 'Anyone with the link can view'.")
-    st.write(f"Error details: {e}")
+    st.error("Data Load Error")
+    st.write(e)
