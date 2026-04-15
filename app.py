@@ -1,54 +1,48 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
-st.set_page_config(layout="wide", page_title="Global Inventory")
+st.set_page_config(layout="wide", page_title="Global Inventory Dashboard")
 
-# 1. Your Base URL (Everything between /d/ and /edit)
-base_url = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
+# The exact URL of your Google Sheet
+# Make sure this is the link you get from the "Share" button
+url = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/edit?usp=sharing"
 
-# 2. Your Specific Tab ID (GID)
-# Double check your browser address bar: if the number after gid= is different, change it here!
-tab_id = "1116131481" 
-
-# 3. Build the export link correctly
-csv_url = f"{base_url}/export?format=csv&gid={tab_id}"
-
-@st.cache_data(ttl=600)
-def load_data():
-    # We use 'header=0' to ensure it reads the top row correctly
-    data = pd.read_csv(csv_url)
-    return data
+# Create a connection object
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df = load_data()
+    # We tell Streamlit the sheet URL and exactly which worksheet to read
+    # If the tab name is exactly 'WOS Summary-Shopify', it will find it!
+    df = conn.read(spreadsheet=url, worksheet="WOS Summary-Shopify", ttl="5m")
 
-    # Dashboard Styling
-    st.markdown("<h2 style='text-align: center; color: #333;'>📦 Inventory Stock Levels</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>📦 Global Stock Levels</h2>", unsafe_allow_html=True)
     st.write("---")
 
-    # Creating the 5 Market Columns
+    # Creating 5 columns
     m1, m2, m3, m4, m5 = st.columns(5)
 
-    # We convert values to numbers and sum them, ignoring errors (like text or empty cells)
+    # Calculation logic for columns H, P, W, AD, AM
     with m1:
-        val = pd.to_numeric(df.iloc[:, 7], errors='coerce').sum()
-        st.metric("🇺🇸 US Shopify", f"{int(val):,}")
+        us_val = pd.to_numeric(df.iloc[:, 7], errors='coerce').sum()
+        st.metric("🇺🇸 US Shopify", f"{int(us_val):,}")
     with m2:
-        val = pd.to_numeric(df.iloc[:, 15], errors='coerce').sum()
-        st.metric("🇨🇦 CA Shopify", f"{int(val):,}")
+        ca_val = pd.to_numeric(df.iloc[:, 15], errors='coerce').sum()
+        st.metric("🇨🇦 CA Shopify", f"{int(ca_val):,}")
     with m3:
-        val = pd.to_numeric(df.iloc[:, 22], errors='coerce').sum()
-        st.metric("🇬🇧 UK Shopify", f"{int(val):,}")
+        uk_val = pd.to_numeric(df.iloc[:, 22], errors='coerce').sum()
+        st.metric("🇬🇧 UK Shopify", f"{int(uk_val):,}")
     with m4:
-        val = pd.to_numeric(df.iloc[:, 29], errors='coerce').sum()
-        st.metric("🇦🇺 AU Shopify", f"{int(val):,}")
+        au_val = pd.to_numeric(df.iloc[:, 29], errors='coerce').sum()
+        st.metric("🇦🇺 AU Shopify", f"{int(au_val):,}")
     with m5:
-        val = pd.to_numeric(df.iloc[:, 38], errors='coerce').sum()
-        st.metric("🇪🇺 EU Shopify", f"{int(val):,}")
+        eu_val = pd.to_numeric(df.iloc[:, 38], errors='coerce').sum()
+        st.metric("🇪🇺 EU Shopify", f"{int(eu_val):,}")
 
-    st.success("Connection Successful!")
+    st.success("Connected to Google Sheets successfully!")
 
 except Exception as e:
-    st.error("Connection Refused")
-    st.write("Please check your GID. Open the sheet tab 'WOS Summary-Shopify' and look at the end of the URL for the gid= number.")
+    st.error("Connection Issue")
+    st.write("Streamlit is having trouble reading that specific tab.")
+    st.info("Check: Is the tab name exactly 'WOS Summary-Shopify' (no extra spaces)?")
     st.write(f"Error details: {e}")
