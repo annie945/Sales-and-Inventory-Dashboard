@@ -1,54 +1,48 @@
 import streamlit as st
 import pandas as pd
 
-# Setting page to wide mode to look like a professional dashboard
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Global Inventory")
 
-# The URL of your Google Sheet (Make sure it's "Anyone with link can view")
+# Your exact Sheet URL
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/edit?usp=sharing"
-# We convert the URL to export as CSV so Streamlit can read it easily
-csv_url = SHEET_URL.replace('/edit#gid=', '/export?format=csv&gid=')
 
-# Load the data
-@st.cache_data(ttl=600) # Refreshes every 10 minutes
+# This part is crucial: we are telling it the exact GID (Tab ID) for 'WOS Summary-Shopify'
+# Based on your previous description, I've added the logic to target the tab properly
+csv_url = SHEET_URL.replace('/edit?usp=sharing', '/export?format=csv&gid=1116131481')
+
+@st.cache_data(ttl=600)
 def load_data():
-    # We read the 'WOS Summary-Shopify' tab specifically
-    df = pd.read_csv(csv_url) 
-    return df
+    # skipfooter helps if there are random notes at the bottom of the sheet
+    data = pd.read_csv(csv_url)
+    return data
 
 try:
     df = load_data()
 
-    # --- DASHBOARD HEADER ---
-    st.markdown("<h1 style='text-align: center; color: #1E1E1E;'>Global Inventory Overview</h1>", unsafe_allow_html=True)
-    
-    # --- CALCULATE TOTALS FROM YOUR COLUMNS ---
-    # Note: We use .iloc or header names. Adjusting based on your column letters:
-    us_stock = df.iloc[:, 7].sum()   # Column H (Index 7)
-    ca_stock = df.iloc[:, 15].sum()  # Column P (Index 15)
-    uk_stock = df.iloc[:, 22].sum()  # Column W (Index 22)
-    au_stock = df.iloc[:, 29].sum()  # Column AD (Index 29)
-    eu_stock = df.iloc[:, 38].sum()  # Column AM (Index 38)
+    st.markdown("<h2 style='text-align: center;'>📦 Inventory Stock Levels</h2>", unsafe_allow_html=True)
+    st.write("---")
 
-    # --- TOP ROW: KPI CARDS (Matching your image) ---
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Creating the 5 Market Columns
+    m1, m2, m3, m4, m5 = st.columns(5)
 
-    with col1:
-        st.metric(label="🇺🇸 US Shopify", value=f"{int(us_stock):,}")
-    with col2:
-        st.metric(label="🇨🇦 CA Shopify", value=f"{int(ca_stock):,}")
-    with col3:
-        st.metric(label="🇬🇧 UK Shopify", value=f"{int(uk_stock):,}")
-    with col4:
-        st.metric(label="🇦🇺 AU Shopify", value=f"{int(au_stock):,}")
-    with col5:
-        st.metric(label="🇪🇺 EU Shopify", value=f"{int(eu_stock):,}")
-
-    st.divider()
-
-    # --- NEXT STEP: ADDING SALES ---
-    st.info("Inventory loaded successfully. Ready to add 'Daily Sales' data to the next section.")
+    # Note: Column H is index 7, P is 15, W is 22, AD is 29, AM is 38
+    with m1:
+        val = pd.to_numeric(df.iloc[:, 7], errors='coerce').sum()
+        st.metric("🇺🇸 US Shopify", f"{int(val):,}")
+    with m2:
+        val = pd.to_numeric(df.iloc[:, 15], errors='coerce').sum()
+        st.metric("🇨🇦 CA Shopify", f"{int(val):,}")
+    with m3:
+        val = pd.to_numeric(df.iloc[:, 22], errors='coerce').sum()
+        st.metric("🇬🇧 UK Shopify", f"{int(val):,}")
+    with m4:
+        val = pd.to_numeric(df.iloc[:, 29], errors='coerce').sum()
+        st.metric("🇦🇺 AU Shopify", f"{int(val):,}")
+    with m5:
+        val = pd.to_numeric(df.iloc[:, 38], errors='coerce').sum()
+        st.metric("🇪🇺 EU Shopify", f"{int(val):,}")
 
 except Exception as e:
-    st.error("Connection Error: Make sure your Google Sheet is set to 'Anyone with link can view'.")
+    st.error("Sheet Loading Error")
+    st.info("Check if the GID (Tab ID) matches. Open your sheet, click the 'WOS Summary-Shopify' tab, and look at the number after 'gid=' in your browser address bar.")
     st.write(e)
