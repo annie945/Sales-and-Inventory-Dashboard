@@ -44,5 +44,32 @@ if page == "📦 Inventory Overview":
 
         def categorize(sku):
             s = str(sku).upper().strip()
-            if any(cam.upper().strip() in s for cam in CAMERAS): return "📸 Camera"
-            if any:
+            if any(cam.upper().strip() in s for cam in CAMERAS):
+                return "📸 Camera"
+            if any(acc.upper().strip() in s for acc in ACCESSORIES):
+                return "🎒 Accessory"
+            return "Other"
+        
+        sku_stock["Category"] = sku_stock["SKU Name"].apply(categorize)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("📸 Cameras")
+            cam_df = sku_stock[sku_stock["Category"] == "📸 Camera"]
+            st.metric(f"{market} Total", f"{cam_df['Stock'].sum():,}")
+            st.dataframe(cam_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("🎒 Accessories")
+            acc_df = sku_stock[sku_stock["Category"] == "🎒 Accessory"]
+            st.metric(f"{market} Total", f"{acc_df['Stock'].sum():,}")
+            st.dataframe(acc_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"Inventory Error: {e}")
+
+# --- PAGE 2: SALES PERFORMANCE ---
+elif page == "💰 Sales Performance":
+    st.title("Sales Analysis")
+    region = st.selectbox("Select Region:", list(SALES_GIDS.keys()))
+    
+    st.write("### 📅 Select Date Range")
+    col_d1, col_d
