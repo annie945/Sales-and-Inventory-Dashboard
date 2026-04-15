@@ -3,7 +3,7 @@ import pandas as pd
 
 st.set_page_config(layout="wide", page_title="Global Inventory")
 
-# 1. Your Base URL
+# 1. Your Base URL (Everything between /d/ and /edit)
 base_url = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
 
 # 2. Your Specific Tab ID (GID)
