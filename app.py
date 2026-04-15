@@ -25,6 +25,7 @@ def load_data(gid):
     url = f"{BASE_URL}/export?format=csv&gid={gid}"
     return pd.read_csv(url)
 
+# --- SIDEBAR ---
 st.sidebar.title("📊 Control Panel")
 page = st.sidebar.radio("Navigate to:", ["📦 Inventory Overview", "💰 Sales Performance"])
 
@@ -69,3 +70,25 @@ if page == "📦 Inventory Overview":
 # --- PAGE 2: SALES PERFORMANCE ---
 elif page == "💰 Sales Performance":
     st.title("Sales Analysis")
+    region = st.selectbox("Select Region:", list(SALES_GIDS.keys()))
+    
+    st.write("### 📅 Select Date Range")
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        start_date = st.date_input("From", datetime.now() - timedelta(days=7))
+    with col_d2:
+        end_date = st.date_input("To", datetime.now())
+
+    try:
+        df_sales = load_data(SALES_GIDS[region])
+        df_sales.columns = [str(c).strip().lower() for c in df_sales.columns]
+        df_sales['date'] = pd.to_datetime(df_sales['date']).dt.date
+        
+        # Filter out "Worry-free Delivery" and "Unknown"
+        df_sales = df_sales[~df_sales['sku'].str.contains('unknown|worry-free delivery', case=False, na=False)]
+
+        # Filter Data for Selected Range
+        mask = (df_sales['date'] >= start_date) & (df_sales['date'] <= end_date)
+        curr_data = df_sales.loc[mask]
+
+        #
