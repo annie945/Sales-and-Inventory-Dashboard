@@ -13,7 +13,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
     # We tell Streamlit the sheet URL and exactly which worksheet to read
-    # If the tab name is exactly 'WOS Summary-Shopify', it will find it!
+    # If the tab name is exactly 'Shopify', it will find it!
     tab_name = "WOS Summary-Shopify".strip()
     df = conn.read(spreadsheet=url, worksheet=tab_name, ttl="5m")
 
