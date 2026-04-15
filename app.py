@@ -55,5 +55,70 @@ if page == "📦 Inventory Overview":
         sku_stock = sku_stock.dropna(subset=["SKU Name"])
         sku_stock["Stock"] = pd.to_numeric(sku_stock["Stock"], errors='coerce').fillna(0).astype(int)
 
-        # Bulletproof Categorization
+        # Categorization Logic with correct indentation
         def categorize(sku):
+            s = str(sku).upper().strip()
+            if any(cam.upper().strip() in s for cam in CAMERAS): 
+                return "📸 Camera"
+            if any(acc.upper().strip() in s for acc in ACCESSORIES): 
+                return "🎒 Accessory"
+            return "Other"
+        
+        sku_stock["Category"] = sku_stock["SKU Name"].apply(categorize)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("📸 Cameras")
+            cam_df = sku_stock[sku_stock["Category"] == "📸 Camera"]
+            st.metric(f"{market} Camera Total", f"{cam_df['Stock'].sum():,}")
+            st.dataframe(cam_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("🎒 Accessories")
+            acc_df = sku_stock[sku_stock["Category"] == "🎒 Accessory"]
+            st.metric(f"{market} Accessory Total", f"{acc_df['Stock'].sum():,}")
+            st.dataframe(acc_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
+            
+        with st.expander("❓ View Other / Uncategorized"):
+            other_df = sku_stock[sku_stock["Category"] == "Other"]
+            st.dataframe(other_df, use_container_width=True)
+            
+    except Exception as e:
+        st.error(f"Inventory Error: {e}")
+
+# --- PAGE 2: SALES PERFORMANCE ---
+elif page == "💰 Sales Performance":
+    st.title("Daily Sales Analysis")
+    region = st.selectbox("Select Region:", list(SALES_GIDS.keys()))
+    period = st.selectbox("Compare Recent Day vs:", ["Last Week", "Last Month"])
+
+    try:
+        df_sales = load_data(SALES_GIDS[region])
+        
+        # Normalize columns: lowercase and strip spaces
+        df_sales.columns = [str(c).strip().lower() for c in df_sales.columns]
+        
+        # Date Conversion
+        df_sales['date'] = pd.to_datetime(df_sales['date']).dt.date
+        
+        recent_date = df_sales['date'].max()
+        if period == "Last Week": 
+            compare_date = recent_date - timedelta(days=7)
+        else: 
+            compare_date = recent_date - timedelta(days=30)
+
+        recent_day = df_sales[df_sales['date'] == recent_date]
+        compare_day = df_sales[df_sales['date'] == compare_date]
+
+        st.write(f"### Comparison: {recent_date} vs {compare_date}")
+        
+        # Summary Metrics
+        r_total = pd.to_numeric(recent_day['quantity'], errors='coerce').sum()
+        c_total = pd.to_numeric(compare_day['quantity'], errors='coerce').sum()
+        
+        st.metric("Total Units Sold Today", f"{int(r_total)}", delta=int(r_total - c_total))
+
+        # SKU Comparison Logic
+        r_sku = recent_day.groupby('sku')['quantity'].sum().reset_index()
+        c_sku = compare_day.groupby('sku')['quantity'].sum().reset_index()
+        
+        comparison = pd.merge(r_sku, c
