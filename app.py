@@ -9,7 +9,6 @@ st.set_page_config(layout="wide", page_title="Global Inventory & Sales Dashboard
 BASE_URL = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
 INV_GID = "0" 
 
-# Your specific Sales Tab GIDs
 SALES_GIDS = {
     "🇺🇸 US": "1304392959", 
     "🇨🇦 CA": "634720426",
@@ -18,26 +17,14 @@ SALES_GIDS = {
     "🇪🇺 EU": "975667344"
 }
 
-# SKU Category Lists
-CAMERAS = [
-    "MA-HK", "MA-KRM", "MA-CMR", "MA-MN", "MA-MK", "MC-MIKAYO", "MC-AKITO", 
-    "MK-MEOWIE", "MK-ZIPPY", "MK-SP", "MP-KOKO", "MP-HK", "MP-KRM", "MP-CMR", 
-    "MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP", "MV-IRIS", "MV-IRI"
-]
+CAMERAS = ["MA-HK", "MA-KRM", "MA-CMR", "MA-MN", "MA-MK", "MC-MIKAYO", "MC-AKITO", "MK-MEOWIE", "MK-ZIPPY", "MK-SP", "MP-KOKO", "MP-HK", "MP-KRM", "MP-CMR", "MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP", "MV-IRIS", "MV-IRI"]
+ACCESSORIES = ["MP2-PP-40", "MP2-PP-120", "MICROSD-32", "MP-PAPER", "TML-TML-SPROUT", "BAG-UNICORN", "BAG-KMTGREEN", "BAG-LITTLEBEE", "BAG-HK", "BAG-KRM", "BAG-CMR", "LANYARD-GREEN", "LANYARD-PINK", "LANYARD-RED", "LANYARD-PURPLE"]
 
-ACCESSORIES = [
-    "MP2-PP-40", "MP2-PP-120", "MICROSD-32", "MP-PAPER", "TML-TML-SPROUT", 
-    "BAG-UNICORN", "BAG-KMTGREEN", "BAG-LITTLEBEE", "BAG-HK", "BAG-KRM", 
-    "BAG-CMR", "LANYARD-GREEN", "LANYARD-PINK", "LANYARD-RED", "LANYARD-PURPLE"
-]
-
-# 3. Data Loading Helper
 @st.cache_data(ttl=300)
 def load_data(gid):
     url = f"{BASE_URL}/export?format=csv&gid={gid}"
     return pd.read_csv(url)
 
-# --- SIDEBAR ---
 st.sidebar.title("📊 Control Panel")
 page = st.sidebar.radio("Navigate to:", ["📦 Inventory Overview", "💰 Sales Performance"])
 
@@ -57,66 +44,5 @@ if page == "📦 Inventory Overview":
 
         def categorize(sku):
             s = str(sku).upper().strip()
-            if any(cam.upper().strip() in s for cam in CAMERAS): 
-                return "📸 Camera"
-            if any(acc.upper().strip() in s for acc in ACCESSORIES): 
-                return "🎒 Accessory"
-            return "Other"
-        
-        sku_stock["Category"] = sku_stock["SKU Name"].apply(categorize)
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("📸 Cameras")
-            cam_df = sku_stock[sku_stock["Category"] == "📸 Camera"]
-            st.metric(f"{market} Camera Total", f"{cam_df['Stock'].sum():,}")
-            st.dataframe(cam_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
-        with c2:
-            st.subheader("🎒 Accessories")
-            acc_df = sku_stock[sku_stock["Category"] == "🎒 Accessory"]
-            st.metric(f"{market} Accessory Total", f"{acc_df['Stock'].sum():,}")
-            st.dataframe(acc_df[["SKU Name", "Stock"]], use_container_width=True, hide_index=True)
-            
-        with st.expander("❓ View Other / Uncategorized"):
-            other_df = sku_stock[sku_stock["Category"] == "Other"]
-            st.dataframe(other_df, use_container_width=True)
-            
-    except Exception as e:
-        st.error(f"Inventory Error: {e}")
-
-# --- PAGE 2: SALES PERFORMANCE ---
-elif page == "💰 Sales Performance":
-    st.title("Daily Sales Analysis")
-    region = st.selectbox("Select Region:", list(SALES_GIDS.keys()))
-    period = st.selectbox("Compare Recent Day vs:", ["Last Week", "Last Month"])
-
-    try:
-        df_sales = load_data(SALES_GIDS[region])
-        df_sales.columns = [str(c).strip().lower() for c in df_sales.columns]
-        df_sales['date'] = pd.to_datetime(df_sales['date']).dt.date
-        
-        recent_date = df_sales['date'].max()
-        compare_date = recent_date - timedelta(days=7) if period == "Last Week" else recent_date - timedelta(days=30)
-
-        recent_day = df_sales[df_sales['date'] == recent_date]
-        compare_day = df_sales[df_sales['date'] == compare_date]
-
-        st.write(f"### Comparison: {recent_date} vs {compare_date}")
-        
-        r_total = pd.to_numeric(recent_day['quantity'], errors='coerce').sum()
-        c_total = pd.to_numeric(compare_day['quantity'], errors='coerce').sum()
-        
-        st.metric("Total Units Sold Today", f"{int(r_total)}", delta=int(r_total - c_total))
-
-        r_sku = recent_day.groupby('sku')['quantity'].sum().reset_index()
-        c_sku = compare_day.groupby('sku')['quantity'].sum().reset_index()
-        
-        comparison = pd.merge(r_sku, c_sku, on='sku', how='outer', suffixes=('_Recent', '_Prev')).fillna(0)
-        comparison['Change'] = comparison['quantity_Recent'] - comparison['quantity_Prev']
-        
-        st.write("### SKU Performance Detail")
-        comparison.columns = ["SKU Name", "Recent Qty", "Previous Qty", "Change"]
-        st.dataframe(comparison.sort_values('Recent Qty', ascending=False), use_container_width=True, hide_index=True)
-
-    except Exception as e:
-        st.error(f"Sales Data Error: {e}")
+            if any(cam.upper().strip() in s for cam in CAMERAS): return "📸 Camera"
+            if any
