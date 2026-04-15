@@ -45,5 +45,5 @@ try:
 except Exception as e:
     st.error("Connection Issue")
     st.write("Streamlit is having trouble reading that specific tab.")
-    st.info("Check: Is the tab name exactly 'WOS Summary-Shopify' (no extra spaces)?")
+    st.info("Check: Is the tab name exactly 'Shopify' (no extra spaces)?")
     st.write(f"Error details: {e}")
