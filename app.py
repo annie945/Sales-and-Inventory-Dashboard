@@ -5,7 +5,7 @@ import pandas as pd
 st.set_page_config(layout="wide")
 
 # The URL of your Google Sheet (Make sure it's "Anyone with link can view")
-SHEET_URL = "YOUR_GOOGLE_SHEET_URL_HERE"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/edit?usp=sharing"
 # We convert the URL to export as CSV so Streamlit can read it easily
 csv_url = SHEET_URL.replace('/edit#gid=', '/export?format=csv&gid=')
 
