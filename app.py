@@ -55,7 +55,6 @@ if page == "📦 Inventory Overview":
         sku_stock = sku_stock.dropna(subset=["SKU Name"])
         sku_stock["Stock"] = pd.to_numeric(sku_stock["Stock"], errors='coerce').fillna(0).astype(int)
 
-        # Categorization Logic with correct indentation
         def categorize(sku):
             s = str(sku).upper().strip()
             if any(cam.upper().strip() in s for cam in CAMERAS): 
@@ -93,32 +92,31 @@ elif page == "💰 Sales Performance":
 
     try:
         df_sales = load_data(SALES_GIDS[region])
-        
-        # Normalize columns: lowercase and strip spaces
         df_sales.columns = [str(c).strip().lower() for c in df_sales.columns]
-        
-        # Date Conversion
         df_sales['date'] = pd.to_datetime(df_sales['date']).dt.date
         
         recent_date = df_sales['date'].max()
-        if period == "Last Week": 
-            compare_date = recent_date - timedelta(days=7)
-        else: 
-            compare_date = recent_date - timedelta(days=30)
+        compare_date = recent_date - timedelta(days=7) if period == "Last Week" else recent_date - timedelta(days=30)
 
         recent_day = df_sales[df_sales['date'] == recent_date]
         compare_day = df_sales[df_sales['date'] == compare_date]
 
         st.write(f"### Comparison: {recent_date} vs {compare_date}")
         
-        # Summary Metrics
         r_total = pd.to_numeric(recent_day['quantity'], errors='coerce').sum()
         c_total = pd.to_numeric(compare_day['quantity'], errors='coerce').sum()
         
         st.metric("Total Units Sold Today", f"{int(r_total)}", delta=int(r_total - c_total))
 
-        # SKU Comparison Logic
         r_sku = recent_day.groupby('sku')['quantity'].sum().reset_index()
         c_sku = compare_day.groupby('sku')['quantity'].sum().reset_index()
         
-        comparison = pd.merge(r_sku, c
+        comparison = pd.merge(r_sku, c_sku, on='sku', how='outer', suffixes=('_Recent', '_Prev')).fillna(0)
+        comparison['Change'] = comparison['quantity_Recent'] - comparison['quantity_Prev']
+        
+        st.write("### SKU Performance Detail")
+        comparison.columns = ["SKU Name", "Recent Qty", "Previous Qty", "Change"]
+        st.dataframe(comparison.sort_values('Recent Qty', ascending=False), use_container_width=True, hide_index=True)
+
+    except Exception as e:
+        st.error(f"Sales Data Error: {e}")
