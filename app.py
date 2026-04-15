@@ -14,7 +14,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 try:
     # We tell Streamlit the sheet URL and exactly which worksheet to read
     # If the tab name is exactly 'Shopify', it will find it!
-    tab_name = "WOS Summary-Shopify".strip()
+    tab_name = "Shopify".strip()
     df = conn.read(spreadsheet=url, worksheet=tab_name, ttl="5m")
 
     st.markdown("<h2 style='text-align: center;'>📦 Global Stock Levels</h2>", unsafe_allow_html=True)
