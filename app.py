@@ -45,4 +45,4 @@ if page == "📦 Inventory Overview":
         def categorize(sku):
             s = str(sku).upper().strip()
             if any(cam.upper().strip() in s for cam in CAMERAS): return "📸 Camera"
-            if any
+            if any:
