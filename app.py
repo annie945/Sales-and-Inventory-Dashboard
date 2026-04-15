@@ -9,11 +9,11 @@ INV_GID = "0"
 
 # ACTION: Ensure these GIDs match your specific country tabs
 SALES_GIDS = {
-    "🇺🇸 US": "111", 
-    "🇨🇦 CA": "222",
-    "🇬🇧 UK": "333",
-    "🇦🇺 AU": "444",
-    "🇪🇺 EU": "555"
+    "🇺🇸 US": "1304392959", 
+    "🇨🇦 CA": "634720426",
+    "🇬🇧 UK": "1657555313",
+    "🇦🇺 AU": "1871282385",
+    "🇪🇺 EU": "975667344"
 }
 
 CAMERAS = ["MA-HK", "MA-KRM", "MA-CMR", "MA-MN", "MA-MK", "MC-MIKAYO", "MC-AKITO", "MK-MEOWIE", "MK-ZIPPY", "MK-SP", "MP-KOKO", "MP-HK", "MP-KRM", "MP-CMR", "MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP", "MV-IRIS"]
