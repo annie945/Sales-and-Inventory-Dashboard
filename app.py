@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # 1. Setup
-st.set_page_config(layout="wide", page_title="Dashboard")
+st.set_page_config(layout="wide")
 
 B = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/export?format=csv"
 G = {
@@ -22,8 +22,8 @@ A = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT",
 
 @st.cache_data(ttl=300)
 def load(gid):
-    url = f"{B}&gid={gid}"
-    return pd.read_csv(url)
+    u = f"{B}&gid={gid}"
+    return pd.read_csv(u)
 
 def is_c(s):
     return any(x in str(s).upper() for x in C)
@@ -35,11 +35,13 @@ pg = st.sidebar.radio("Nav", ["📦 Inv", "💰 Sales"])
 
 # --- INVENTORY ---
 if pg == "📦 Inv":
-    st.title("📦 Inventory Stock")
+    st.title("📦 Inventory")
     try:
         df = load("0")
         m = st.radio("Market", list(G.keys()), horizontal=True)
-        idx = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}[m]
+        # Market column map
+        mp = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
+        idx = mp[m]
         df_i = df.iloc[:, [0, idx]].copy()
         df_i.columns = ["SKU", "Qty"]
         df_i = df_i.dropna(subset=["SKU"])
@@ -49,82 +51,90 @@ if pg == "📦 Inv":
         with c1:
             sc = df_i[df_i["SKU"].apply(is_c)]
             st.metric("Cameras", f"{sc['Qty'].sum():,}")
-            st.dataframe(sc, hide_index=True, use_container_width=True)
+            st.dataframe(sc, hide_index=True)
         with c2:
             sa = df_i[df_i["SKU"].apply(is_a)]
             st.metric("Accessories", f"{sa['Qty'].sum():,}")
-            st.dataframe(sa, hide_index=True, use_container_width=True)
+            st.dataframe(sa, hide_index=True)
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(e)
 
 # --- SALES ---
 elif pg == "💰 Sales":
-    st.title("💰 Sales Performance")
+    st.title("💰 Sales")
     r = st.sidebar.selectbox("Region", list(G.keys()))
     try:
-        df = load(G[r])
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        df['date'] = pd.to_datetime(df['date']).dt.date
-        df = df[~df['sku'].str.contains('unknown|worry|delivery', case=False, na=False)]
+        raw = load(G[r])
+        raw.columns = [str(c).strip().lower() for c in raw.columns]
+        raw['date'] = pd.to_datetime(raw['date']).dt.date
+        f = raw[~raw['sku'].str.contains('unknown|worry|delivery', case=False, na=False)]
         
-        lt = df['date'].max()
+        lt = f['date'].max()
         s1 = lt - timedelta(6)
-        p1, p2 = s1 - timedelta(7), s1 - timedelta(1)
+        p1 = s1 - timedelta(7)
+        p2 = s1 - timedelta(1)
         
-        cur = df[(df['date'] >= s1) & (df['date'] <= lt)].copy()
-        pre = df[(df['date'] >= p1) & (df['date'] <= p2)].copy()
-        ytd = df[pd.to_datetime(df['date']).dt.year == lt.year].copy()
+        cur = f[(f['date'] >= s1) & (f['date'] <= lt)].copy()
+        pre = f[(f['date'] >= p1) & (f['date'] <= p2)].copy()
+        
+        # YTD
+        ytd = f[pd.to_datetime(f['date']).dt.year == lt.year].copy()
         y_sm = ytd.groupby('sku')['quantity'].sum().reset_index()
 
-        st.write(f"**Period:** {s1} to {lt} (vs {p1} to {p2})")
+        st.write(f"Week: {s1} to {lt}")
         c1, c2 = st.columns(2)
         with c1:
-            v = cur[cur['sku'].apply(is_c)]['quantity'].sum()
-            o = pre[pre['sku'].apply(is_c)]['quantity'].sum()
+            # Shortened these lines specifically to avoid your error
+            cur_c = cur[cur['sku'].apply(is_c)]
+            v = cur_c['quantity'].sum()
+            pre_c = pre[pre['sku'].apply(is_c)]
+            o = pre_c['quantity'].sum()
             st.metric("📸 Cam Week", int(v), delta=int(v-o))
         with c2:
-            v = cur[cur['sku'].apply(is_a)]['quantity'].sum()
-            o = pre[pre['sku'].apply(is_a)]['quantity'].sum()
+            cur_a = cur[cur['sku'].apply(is_a)]
+            v = cur_a['quantity'].sum()
+            pre_a = pre[pre['sku'].apply(is_a)]
+            o = pre_a['quantity'].sum()
             st.metric("🎒 Acc Week", int(v), delta=int(v-o))
 
         st.divider()
         st.subheader("🔥 Weekly Movers")
         r_s = cur.groupby('sku')['quantity'].sum()
         p_s = pre.groupby('sku')['quantity'].sum()
-        cp = pd.merge(
-            r_s, p_s, on='sku', how='outer', suffixes=('_c', '_p')
-        ).fillna(0)
+        
+        cp = pd.merge(r_s, p_s, on='sku', how='outer', suffixes=('_c', '_p'))
+        cp = cp.fillna(0)
         cp['D'] = cp['quantity_c'] - cp['quantity_p']
         
         m1, m2, m3, m4 = st.columns(4)
-        cm, ac = cp[cp.index.map(is_c)], cp[cp.index.map(is_a)]
+        cm = cp[cp.index.map(is_c)]
+        ac = cp[cp.index.map(is_a)]
+        
         with m1:
             st.success("📈 Cam Inc")
-            st.dataframe(cm[cm['D']>0].nlargest(3,'D')[['D']], use_container_width=True)
+            st.dataframe(cm[cm['D']>0].nlargest(3,'D')[['D']])
         with m2:
             st.error("📉 Cam Dec")
-            st.dataframe(cm[cm['D']<0].nsmallest(3,'D')[['D']], use_container_width=True)
+            st.dataframe(cm[cm['D']<0].nsmallest(3,'D')[['D']])
         with m3:
             st.success("📈 Acc Inc")
-            st.dataframe(ac[ac['D']>0].nlargest(3,'D')[['D']], use_container_width=True)
+            st.dataframe(ac[ac['D']>0].nlargest(3,'D')[['D']])
         with m4:
             st.error("📉 Acc Dec")
-            st.dataframe(ac[ac['D']<0].nsmallest(3,'D')[['D']], use_container_width=True)
+            st.dataframe(ac[ac['D']<0].nsmallest(3,'D')[['D']])
 
         st.divider()
-        st.subheader(f"🏆 YTD {lt.year} Top Sellers")
+        st.subheader(f"🏆 YTD {lt.year} Top 3")
         y1, y2 = st.columns(2)
         with y1:
-            st.info("📸 Camera Top 3 (YTD)")
-            st.dataframe(
-                y_sm[y_sm['sku'].apply(is_c)].nlargest(3,'quantity'), 
-                hide_index=True, use_container_width=True
-            )
+            st.info("📸 Camera YTD")
+            yc = y_sm[y_sm['sku'].apply(is_c)]
+            st.dataframe(yc.nlargest(3,'quantity'), hide_index=True)
         with y2:
-            st.info("🎒 Accessory Top 3 (YTD)")
-            st.dataframe(
-                y_sm[y_sm['sku'].apply(is_a)].nlargest(3,'quantity'), 
-                hide_index=True, use_container_width=True
-            )
+            st.info("🎒 Accessory YTD")
+            ya = y_sm[y_sm['sku'].apply(is_a)]
+            st.dataframe(ya.nlargest(3,'quantity'), hide_index=True)
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(e)
+
+# --- FINISHED ---
