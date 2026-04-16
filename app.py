@@ -28,15 +28,6 @@ page = st.sidebar.radio("Navigation", ["📦 Inventory Overview", "💰 Sales Pe
 
 def is_cam(sku): return any(x in str(sku).upper() for x in CAMS)
 def is_acc(sku): return any(x in str(sku).upper() for x in ACCS)
-def get_model(sku):
-    s = str(sku).upper().strip()
-    if not is_cam(s): return None
-    if s.startswith("MA-"): return "Model A"
-    if s.startswith("MC-"): return "Model C"
-    if s.startswith("MK-"): return "Model K"
-    if s.startswith("MP2-"): return "Model P2"
-    if s.startswith("MP-"): return "Model P"
-    return None
 
 # --- INVENTORY PAGE ---
 if page == "📦 Inventory Overview":
@@ -65,7 +56,7 @@ if page == "📦 Inventory Overview":
 
 # --- SALES PAGE ---
 elif page == "💰 Sales Performance":
-    st.title("💰 Sales Performance Analysis")
+    st.title("💰 Sales & YTD Performance")
     reg = st.sidebar.selectbox("Region", list(SALES_GIDS.keys()))
 
     try:
@@ -74,77 +65,76 @@ elif page == "💰 Sales Performance":
         df['date'] = pd.to_datetime(df['date']).dt.date
         df = df[~df['sku'].str.contains('unknown|worry-free|delivery', case=False, na=False)]
 
+        # --- WEEKLY LOGIC ---
         end_date = df['date'].max()
         start_date = end_date - timedelta(days=6)
         prev_start, prev_end = start_date - timedelta(days=7), start_date - timedelta(days=1)
 
         curr = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
         prev = df[(df['date'] >= prev_start) & (df['date'] <= prev_end)].copy()
+        
+        # --- YTD LOGIC ---
+        current_year = end_date.year
+        ytd_data = df[pd.to_datetime(df['date']).dt.year == current_year].copy()
+        ytd_grouped = ytd_data.groupby('sku')['quantity'].sum().reset_index()
 
-        # 1. Header Metrics
-        st.markdown(f"**Period:** {start_date} to {end_date} vs {prev_start} to {prev_end}")
+        # 1. Weekly Metrics
+        st.markdown(f"**Weekly View:** {start_date} to {end_date} vs {prev_start} to {prev_end}")
         col1, col2 = st.columns(2)
         with col1:
             val = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
             old = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric("📸 Camera Sales", int(val), delta=int(val - old))
+            st.metric("📸 Weekly Camera Sales", int(val), delta=int(val - old))
         with col2:
             val = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
             old = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
-            st.metric("🎒 Accessory Sales", int(val), delta=int(val - old))
+            st.metric("🎒 Weekly Accessory Sales", int(val), delta=int(val - old))
 
         st.divider()
 
-        # 2. TOP MOVERS (Increase / Decrease)
-        st.subheader("🔥 Top Performance Movers (Week-over-Week)")
+        # 2. Top Movers (Filtered)
+        st.subheader("🔥 Weekly Top Movers (Excluding Zero Change)")
         r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
         p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
-        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
-        comp['Delta'] = comp['quantity_c'] - comp['quantity_p']
+        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes='_cp').fillna(0)
+        comp['Delta'] = comp.iloc[:, 1] - comp.iloc[:, 2]
         
-        c_win, c_lose, a_win, a_lose = st.columns(4)
-        
-        # Split Data
+        # Split & Filter (Postive for Win, Negative for Loss, ignore 0)
         cam_comp = comp[comp['sku'].apply(is_cam)]
         acc_comp = comp[comp['sku'].apply(is_acc)]
-
+        
+        c_win, c_lose, a_win, a_lose = st.columns(4)
         with c_win:
-            st.success("📈 Camera Increase")
-            st.dataframe(cam_comp.nlargest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
+            st.success("📈 Cam Increase")
+            st.dataframe(cam_comp[cam_comp['Delta'] > 0].nlargest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
         with c_lose:
-            st.error("📉 Camera Decrease")
-            st.dataframe(cam_comp.nsmallest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
+            st.error("📉 Cam Decrease")
+            st.dataframe(cam_comp[cam_comp['Delta'] < 0].nsmallest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
         with a_win:
-            st.success("📈 Accessory Increase")
-            st.dataframe(acc_comp.nlargest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
+            st.success("📈 Acc Increase")
+            st.dataframe(acc_comp[acc_comp['Delta'] > 0].nlargest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
         with a_lose:
-            st.error("📉 Accessory Decrease")
-            st.dataframe(acc_comp.nsmallest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
+            st.error("📉 Acc Decrease")
+            st.dataframe(acc_comp[acc_comp['Delta'] < 0].nsmallest(3, 'Delta')[['sku', 'Delta']], hide_index=True)
 
         st.divider()
 
-        # 3. Monthly Trend Chart
-        st.subheader("📈 Monthly Sales Trend per Model")
-        df_t = df.copy()
-        df_t['Model'] = df_t['sku'].apply(get_model)
-        df_t = df_t.dropna(subset=['Model'])
-        df_t['Month'] = pd.to_datetime(df_t['date']).dt.strftime('%Y-%m')
-        st.line_chart(df_t.groupby(['Month', 'Model'])['quantity'].sum().unstack().fillna(0), height=350)
+        # 3. YTD PERFORMANCE
+        st.subheader(f"🏆 Year-to-Date (YTD) {current_year} Performance")
+        y_c1, y_c2 = st.columns(2)
+        
+        with y_c1:
+            st.info("📸 Top 3 Cameras (YTD)")
+            ytd_cam = ytd_grouped[ytd_grouped['sku'].apply(is_cam)]
+            st.dataframe(ytd_cam.nlargest(3, 'quantity'), use_container_width=True, hide_index=True)
+            st.info("📸 Bottom 3 Cameras (YTD)")
+            st.dataframe(ytd_cam.nsmallest(3, 'quantity'), use_container_width=True, hide_index=True)
 
-        # 4. Tables
-        c1, c2 = st.columns([1, 1.5])
-        with c1:
-            st.subheader("📊 Model Summary")
-            curr['Model'] = curr['sku'].apply(get_model)
-            prev['Model'] = prev['sku'].apply(get_model)
-            m_comp = pd.concat([
-                curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum(),
-                prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
-            ], axis=1, keys=['Curr', 'Prev']).fillna(0)
-            st.dataframe(m_comp.style.format("{:.0f}"), use_container_width=True)
-        with c2:
-            st.subheader("📦 Full SKU Detail")
-            comp.columns = ["SKU", "Curr Qty", "Prev Qty", "Delta"]
-            st.dataframe(comp.sort_values('Curr Qty', ascending=False), use_container_width=True, hide_index=True)
+        with y_c2:
+            st.info("🎒 Top 3 Accessories (YTD)")
+            ytd_acc = ytd_grouped[ytd_grouped['sku'].apply(is_acc)]
+            st.dataframe(ytd_acc.nlargest(3, 'quantity'), use_container_width=True, hide_index=True)
+            st.info("🎒 Bottom 3 Accessories (YTD)")
+            st.dataframe(ytd_acc.nsmallest(3, 'quantity'), use_container_width=True, hide_index=True)
 
     except Exception as e: st.error(f"Error: {e}")
