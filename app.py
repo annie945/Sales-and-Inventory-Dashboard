@@ -55,7 +55,6 @@ elif page == "💰 Sales":
 
     try:
         df = load(SALES_GIDS[reg])
-        # Fixed the line that caused your SyntaxError
         df.columns = [str(c).strip().lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date']).dt.date
         df = df[~df['sku'].str.contains('unknown|worry-free', case=False, na=False)]
@@ -67,7 +66,7 @@ elif page == "💰 Sales":
         r_tot, p_tot = curr['quantity'].sum(), prev['quantity'].sum()
         st.metric(f"Total Units ({diff} Days)", f"{int(r_tot)}", delta=int(r_tot - p_tot))
 
-        # 1. Model Line Comparison (Cameras Only)
+        # 1. Model Comparison (Cameras Only)
         st.subheader("📸 Model Line Comparison")
         def get_model(sku):
             s = str(sku).upper().strip()
@@ -81,7 +80,6 @@ elif page == "💰 Sales":
 
         curr['Model'] = curr['sku'].apply(get_model)
         prev['Model'] = prev['sku'].apply(get_model)
-        
         m_curr = curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
         m_prev = prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
         m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current', 'Previous']).fillna(0)
@@ -89,4 +87,15 @@ elif page == "💰 Sales":
 
         # 2. Comparison Chart
         st.subheader("📊 Sales Trend Chart")
-        chart_data =
+        chart_df = pd.DataFrame({"Period": ["Prev", "Current"], "Units": [p_tot, r_tot]})
+        st.bar_chart(data=chart_df, x="Period", y="Units")
+
+        # 3. Individual SKU Details
+        st.subheader("📦 SKU Performance Detail")
+        r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
+        p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
+        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
+        comp['Change'] = comp['quantity_c'] - comp['quantity_p']
+        comp.columns = ["SKU", "Current", "Previous", "Change"]
+        st.dataframe(comp.sort_values('Current', ascending=False), use_container_width=True, hide_index=True)
+    except Exception as e: st.error(f"Error: {e}")
