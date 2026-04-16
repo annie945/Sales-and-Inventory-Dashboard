@@ -14,30 +14,22 @@ st.markdown("""
 # --- SHEET IDs ---
 FORECAST_SHEET_ID = "1elePyM-HdtFc382VsSac8PD4NQrUSXZF9qypCzyzcCc" 
 MAIN_SHEET_ID = "1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
+PO_MASTER_SHEET_ID = "1qaITe6eRrJMY_Z1JdC_la-Z69OiwIlOWbRE6jj7uh0A" # NEW PO Master Sheet
 
-# GIDs (Live Inventory & Sales)
+# GIDs
 GIDS_ORIG = {"🇺🇸 US": "1304392959", "🇨🇦 CA": "634720426", "🇬🇧 UK": "1657555313", "🇦🇺 AU": "1871282385", "🇪🇺 EU": "975667344"}
 GIDS_AMZ = {"🇺🇸 US": "1758192113", "🇨🇦 CA": "297394922", "🇬🇧 UK": "1202968115", "🇦🇺 AU": "1435942430"}
-
-# GIDs (Monthly Forecast Demand)
 GIDS_FOR_MONTHS = {
-    "Shopify/WH": {
-        "🇺🇸 US": "2053646844", "🇨🇦 CA": "1132992902", "🇪🇺 EU": "314290170", "🇦🇺 AU": "592032183", "🇬🇧 UK": "1664038544"
-    },
-    "Amazon (FBA)": {
-        "🇺🇸 US": "1911531717", "🇨🇦 CA": "749217991"
-    }
+    "Shopify/WH": {"🇺🇸 US": "2053646844", "🇨🇦 CA": "1132992902", "🇪🇺 EU": "314290170", "🇦🇺 AU": "592032183", "🇬🇧 UK": "1664038544"},
+    "Amazon (FBA)": {"🇺🇸 US": "1911531717", "🇨🇦 CA": "749217991"}
 }
 GID_SAFETY_SOURCE = "2100066410"
+GID_PO_GRID = "1801670245" # NEW PO Master Grid
 
-# --- REGION RANGES FOR SAFETY STOCK (GID 2100066410) ---
+# --- REGION RANGES FOR SAFETY STOCK ---
 REGION_RANGES = {
-    "Shopify/WH": {
-        "🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)
-    },
-    "Amazon (FBA)": {
-        "🇺🇸 US": (110, 130), "🇨🇦 CA": (131, 151)
-    }
+    "Shopify/WH": {"🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)},
+    "Amazon (FBA)": {"🇺🇸 US": (110, 130), "🇨🇦 CA": (131, 151)}
 }
 
 CAMS = ["MA-","MC-","MK-","MP-","MV-"]
@@ -56,6 +48,32 @@ def is_valid_sku(s):
 
 def is_cam(s): return any(x in str(s).upper() for x in CAMS)
 
+# --- NEW: PO DATA PROCESSING ---
+def get_on_order_data(channel_filter):
+    try:
+        df_po = load_csv(PO_MASTER_SHEET_ID, GID_PO_GRID)
+        # Filter: Status (Col L / Index 11) is NOT 'Received'
+        # Column Map: A=PO (0), E=Dest (4), F=SKU (5), G=Order Qty (6), H=Ship Qty (7), K=Tracking (10), L=Status (11)
+        df_po.columns = range(df_po.shape[1])
+        df_po = df_po[df_po[11].str.upper() != "RECEIVED"]
+        
+        # Split by Channel (Destination Col E / Index 4)
+        if channel_filter == "Amazon (FBA)":
+            df_po = df_po[df_po[4].str.contains("AMZ", case=False, na=False)]
+        else:
+            df_po = df_po[~df_po[4].str.contains("AMZ", case=False, na=False)]
+            
+        # Group by SKU
+        on_order = df_po.groupby(5).agg({
+            0: lambda x: ', '.join(x.astype(str).unique()), # PO Numbers
+            6: 'sum', # Total Order Qty
+            10: lambda x: ', '.join(x.dropna().astype(str).unique()) # Trackings
+        }).reset_index()
+        on_order.columns = ['SKU', 'POs', 'On Order Qty', 'Tracking']
+        return on_order
+    except:
+        return pd.DataFrame(columns=['SKU', 'POs', 'On Order Qty', 'Tracking'])
+
 # --- SIDEBAR ---
 st.sidebar.header("🏢 Channel")
 chan = st.sidebar.selectbox("Source", ["Shopify/WH", "Amazon (FBA)"])
@@ -66,69 +84,83 @@ page = st.sidebar.radio("View", ["📦 Inventory & Risk", "💰 Sales Performanc
 if page == "📦 Inventory & Risk":
     st.title(f"📦 {chan} Inventory & Risk Analysis")
     try:
-        # Load Inventory Stock
+        # 1. Load Data
         inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
         df_inv = load_csv(MAIN_SHEET_ID, inv_gid)
         m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
         m_sel = st.radio("Select Market", list(m_map.keys()), horizontal=True)
         
+        # 2. Get On Order Data
+        df_on_order = get_on_order_data(chan)
+        
+        # 3. Process Stock Table
         s_df = df_inv.iloc[:, [0, m_map[m_sel]]].copy()
         s_df.columns = ["SKU", "Stock"]
         s_df = s_df[s_df["SKU"].apply(is_valid_sku)]
         s_df["Stock"] = pd.to_numeric(s_df["Stock"], errors='coerce').fillna(0).astype(int)
+        
+        # Merge with On Order
+        s_df = pd.merge(s_df, df_on_order, on='SKU', how='left').fillna(0)
+        s_df['Total Potential'] = s_df['Stock'] + s_df['On Order Qty']
 
-        # --- DYNAMIC RISK ANALYSIS (Shared Shopify & Amazon Logic) ---
+        # --- RISK ANALYSIS ---
         if m_sel in GIDS_FOR_MONTHS[chan]:
             st.subheader(f"🚨 3-Month Out-of-Stock Risk ({m_sel})")
-            
-            # Load Safety Stock Slice
             safety_full = load_csv(FORECAST_SHEET_ID, GID_SAFETY_SOURCE)
             r_start, r_end = REGION_RANGES[chan][m_sel]
             safety_df = safety_full.iloc[r_start:r_end].copy()
             safety_df.columns = [str(c).strip() for c in safety_df.columns]
             
-            # Load Forecast Demand
             f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
             f_df.columns = [str(c).strip() for c in f_df.columns]
-            
-            today = datetime.now()
-            target_months = [(today.replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
+            target_months = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
 
             risk_data = []
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip()
                 if not is_valid_sku(sku): continue
-                
                 demand_3m = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
                 safe_row = safety_df[safety_df.iloc[:, 0].str.lower().str.strip() == sku.lower()]
                 safety = pd.to_numeric(safe_row.iloc[0, 2], errors='coerce') if not safe_row.empty else 0
                 
-                live_val = s_df[s_df["SKU"].str.lower().str.strip() == sku.lower()]["Stock"].sum()
-                balance = live_val - demand_3m - safety
+                # Compare against Total Potential (Stock + On Order)
+                item_vals = s_df[s_df["SKU"].str.lower().str.strip() == sku.lower()]
+                live_val = item_vals["Stock"].sum()
+                on_order_val = item_vals["On Order Qty"].sum()
+                
+                balance = (live_val + on_order_val) - demand_3m - safety
                 
                 if balance < 0:
-                    risk_data.append({"SKU": sku.upper(), "Live Stock": int(live_val), "3m Demand": int(demand_3m), "Safety": int(safety), "Shortage": int(abs(balance))})
+                    risk_data.append({
+                        "SKU": sku.upper(), 
+                        "Live Stock": int(live_val), 
+                        "📦 On Order": int(on_order_val),
+                        "3m Demand": int(demand_3m), 
+                        "Shortage": int(abs(balance))
+                    })
 
             if risk_data:
-                st.error(f"⚠️ {len(risk_data)} SKUs estimated to go OOS in {m_sel}.")
+                st.error(f"⚠️ {len(risk_data)} SKUs at risk (Including incoming orders).")
                 st.dataframe(pd.DataFrame(risk_data).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
-            else: st.success(f"✅ Stock levels for {m_sel} appear healthy.")
+            else: st.success(f"✅ Stock + Incoming orders look healthy.")
             st.divider()
-        else:
-            st.info(f"💡 Forecast/Risk analysis for {chan} {m_sel} is not yet configured.")
 
-        # Display Standard Inventory Tables
+        # Display Stock Tables
+        st.subheader("📊 Stock & Inbound Status")
+        # Clean display: remove columns with 0 on order to save space if needed
+        display_df = s_df[['SKU', 'Stock', 'On Order Qty', 'POs', 'Tracking']]
+        
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📸 Cameras")
-            st.dataframe(s_df[s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+            st.markdown("### 📸 Cameras")
+            st.dataframe(display_df[display_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
         with c2:
-            st.subheader("🎒 Accessories")
-            st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+            st.markdown("### 🎒 Accessories")
+            st.dataframe(display_df[~display_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
 
-    except Exception as e: st.error(f"Inventory Error: {e}")
+    except Exception as e: st.error(f"Error: {e}")
 
-# --- SALES PERFORMANCE (FULLY PRESERVED) ---
+# --- SALES PERFORMANCE (REMAINS SAME) ---
 elif page == "💰 Sales Performance":
     st.title(f"💰 {chan} Sales Performance")
     active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
