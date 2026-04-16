@@ -2,8 +2,16 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 1. Setup
-st.set_page_config(layout="wide", page_title="Global Inventory & Sales")
+# 1. Setup & Styling
+st.set_page_config(layout="wide", page_title="Global Inventory & Sales Pro")
+
+# Professional CSS for cleaner tables and metrics
+st.markdown("""
+    <style>
+    [data-testid="stMetricValue"] { font-size: 28px; color: #1f77b4; }
+    .main { background-color: #f8f9fa; }
+    </style>
+    """, unsafe_allow_html=True)
 
 BASE = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/export?format=csv"
 SALES_GIDS = {
@@ -16,106 +24,109 @@ ACCS = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT","BAG-U
 @st.cache_data(ttl=300)
 def load(gid): return pd.read_csv(f"{BASE}&gid={gid}")
 
-page = st.sidebar.radio("Menu", ["📦 Inventory", "💰 Sales Performance"])
+page = st.sidebar.radio("Navigation", ["📦 Inventory Overview", "💰 Sales Performance"])
 
-if page == "📦 Inventory":
-    st.title("Inventory Stock")
+# Helper for Logic
+def is_cam(sku): return any(x in str(sku).upper() for x in CAMS)
+def is_acc(sku): return any(x in str(sku).upper() for x in ACCS)
+def get_model(sku):
+    s = str(sku).upper().strip()
+    if not is_cam(s): return None
+    if s.startswith("MA-"): return "Model A"
+    if s.startswith("MC-"): return "Model C"
+    if s.startswith("MK-"): return "Model K"
+    if s.startswith("MP2-"): return "Model P2"
+    if s.startswith("MP-"): return "Model P"
+    return None # Returns None for anything else to hide "Other Camera"
+
+# --- INVENTORY PAGE ---
+if page == "📦 Inventory Overview":
+    st.title("📦 Inventory Stock")
     try:
         df = load("0")
-        m_label = st.radio("Market", list(SALES_GIDS.keys()), horizontal=True)
+        m_label = st.radio("Select Market:", list(SALES_GIDS.keys()), horizontal=True)
         m_idx = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}[m_label]
+        
         sku_df = df.iloc[:, [0, m_idx]].copy()
         sku_df.columns = ["SKU", "Stock"]
         sku_df = sku_df.dropna(subset=["SKU"])
         sku_df["Stock"] = pd.to_numeric(sku_df["Stock"], errors='coerce').fillna(0).astype(int)
 
-        def get_cat(sku):
-            s = str(sku).upper().strip()
-            if any(x in s for x in CAMS): return "📸 Camera"
-            if any(x in s for x in ACCS): return "🎒 Accessory"
-            return "Other"
-        
-        sku_df["Cat"] = sku_df["SKU"].apply(get_cat)
         c1, c2 = st.columns(2)
-        for cat, col in [("📸 Camera", c1), ("🎒 Accessory", c2)]:
-            with col:
-                sub = sku_df[sku_df["Cat"] == cat]
-                st.metric(f"Total {cat}", f"{sub['Stock'].sum():,}")
-                st.dataframe(sub[["SKU", "Stock"]], use_container_width=True, hide_index=True)
-    except Exception as e: st.error(f"Error: {e}")
+        with c1:
+            st.subheader("📸 Cameras")
+            sub_c = sku_df[sku_df["SKU"].apply(is_cam)]
+            st.metric("Total Camera Stock", f"{sub_c['Stock'].sum():,}")
+            st.dataframe(sub_c, use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("🎒 Accessories")
+            sub_a = sku_df[sku_df["SKU"].apply(is_acc)]
+            st.metric("Total Accessory Stock", f"{sub_a['Stock'].sum():,}")
+            st.dataframe(sub_a, use_container_width=True, hide_index=True)
+    except Exception as e: st.error(f"Error loading inventory: {e}")
 
+# --- SALES PAGE ---
 elif page == "💰 Sales Performance":
-    st.title("Sales Analysis")
-    reg = st.selectbox("Select Region", list(SALES_GIDS.keys()))
+    st.title("💰 Sales Performance Analysis")
+    reg = st.sidebar.selectbox("Region", list(SALES_GIDS.keys()))
 
     try:
         df = load(SALES_GIDS[reg])
         df.columns = [str(c).strip().lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date']).dt.date
-        df = df[~df['sku'].str.contains('unknown|worry-free', case=False, na=False)]
+        df = df[~df['sku'].str.contains('unknown|worry-free|delivery', case=False, na=False)]
 
-        # --- Automatic Weekly Logic ---
+        # Dates
         end_date = df['date'].max()
         start_date = end_date - timedelta(days=6)
+        prev_start = start_date - timedelta(days=7)
         prev_end = start_date - timedelta(days=1)
-        prev_start = prev_end - timedelta(days=6)
-
-        curr_range_str = f"{start_date} to {end_date}"
-        prev_range_str = f"{prev_start} to {prev_end}"
 
         curr = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
         prev = df[(df['date'] >= prev_start) & (df['date'] <= prev_end)].copy()
 
-        # --- 1. Top Metrics (Camera vs Accessory) ---
-        def is_cam(sku): return any(x in str(sku).upper() for x in CAMS)
-        def is_acc(sku): return any(x in str(sku).upper() for x in ACCS)
+        # 1. Metrics Header
+        st.markdown(f"**Comparison Range:** {start_date} to {end_date} (vs {prev_start} to {prev_end})")
+        col1, col2 = st.columns(2)
+        with col1:
+            val = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
+            old = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
+            st.metric("📸 Camera Units", int(val), delta=int(val - old))
+        with col2:
+            val = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
+            old = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
+            st.metric("🎒 Accessory Units", int(val), delta=int(val - old))
 
-        c1, c2 = st.columns(2)
-        with c1:
-            curr_c = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
-            prev_c = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric(f"📸 Camera Sales ({curr_range_str})", f"{int(curr_c)}", delta=int(curr_c - prev_c))
-        with c2:
-            curr_a = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
-            prev_a = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
-            st.metric(f"🎒 Accessory Sales ({curr_range_str})", f"{int(curr_a)}", delta=int(curr_a - prev_a))
+        st.divider()
 
-        # --- 2. Monthly Trend Chart by Model (Full History) ---
-        st.subheader("📈 Monthly Sales Trend per Model (All Time)")
-        def get_model(sku):
-            s = str(sku).upper().strip()
-            if not is_cam(s): return None
-            if s.startswith("MA-"): return "Model A"
-            if s.startswith("MC-"): return "Model C"
-            if s.startswith("MK-"): return "Model K"
-            if s.startswith("MP2-"): return "Model P2"
-            if s.startswith("MP-"): return "Model P"
-            return "Other Camera"
-
+        # 2. Line Chart (Cleaner)
+        st.subheader("📈 Monthly Sales Trend per Model")
         df_trend = df.copy()
         df_trend['Model'] = df_trend['sku'].apply(get_model)
-        df_trend = df_trend.dropna(subset=['Model'])
-        df_trend['Month'] = pd.to_datetime(df_trend['date']).dt.to_period('M').astype(str)
+        df_trend = df_trend.dropna(subset=['Model']) # Automatically hides "Other Camera"
+        df_trend['Month'] = pd.to_datetime(df_trend['date']).dt.strftime('%Y-%m')
         
         trend_pivot = df_trend.groupby(['Month', 'Model'])['quantity'].sum().unstack().fillna(0)
-        st.line_chart(trend_pivot)
+        st.line_chart(trend_pivot, height=400)
 
-        # --- 3. Weekly Model Comparison Table ---
-        st.subheader(f"📊 Model Breakdown: {curr_range_str} vs {prev_range_str}")
-        curr['Model'] = curr['sku'].apply(get_model)
-        prev['Model'] = prev['sku'].apply(get_model)
-        m_curr = curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
-        m_prev = prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
-        m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current Week', 'Previous Week']).fillna(0)
-        st.table(m_comp.style.format("{:.0f}"))
+        # 3. Tables
+        c1, c2 = st.columns([1, 1.5])
+        with c1:
+            st.subheader("📊 Model Summary")
+            curr['Model'] = curr['sku'].apply(get_model)
+            prev['Model'] = prev['sku'].apply(get_model)
+            m_curr = curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
+            m_prev = prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
+            m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current', 'Previous']).fillna(0)
+            st.dataframe(m_comp.style.format("{:.0f}"), use_container_width=True)
 
-        # --- 4. Individual SKU Details ---
-        st.subheader("📦 SKU Performance Details")
-        r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
-        p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
-        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
-        comp['Change'] = comp['quantity_c'] - comp['quantity_p']
-        comp.columns = ["SKU", "Current Week", "Prev Week", "Change"]
-        st.dataframe(comp.sort_values('Current Week', ascending=False), use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("📦 SKU Detail")
+            r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
+            p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
+            comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
+            comp['Change'] = comp['quantity_c'] - comp['quantity_p']
+            comp.columns = ["SKU", "Curr Qty", "Prev Qty", "Delta"]
+            st.dataframe(comp.sort_values('Curr Qty', ascending=False), use_container_width=True, hide_index=True)
 
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: st.error(f"Sales Data Error: {e}")
