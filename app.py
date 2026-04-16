@@ -9,7 +9,6 @@ st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 28px; color: #1f77b4; }
     .main { background-color: #f8f9fa; }
-    div[data-testid="stExpander"] { border: none; box-shadow: none; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -56,7 +55,7 @@ if page == "📦 Inventory Overview":
 
 # --- SALES PAGE ---
 elif page == "💰 Sales Performance":
-    st.title("💰 Sales & YTD Performance")
+    st.title("💰 Weekly & YTD Performance")
     reg = st.sidebar.selectbox("Region", list(SALES_GIDS.keys()))
 
     try:
@@ -66,14 +65,34 @@ elif page == "💰 Sales Performance":
         df = df[~df['sku'].str.contains('unknown|worry-free|delivery', case=False, na=False)]
 
         # --- WEEKLY LOGIC ---
-        end_date = df['date'].max()
-        start_date = end_date - timedelta(days=6)
+        latest_date = df['date'].max()
+        start_date = latest_date - timedelta(days=6)
         prev_start, prev_end = start_date - timedelta(days=7), start_date - timedelta(days=1)
 
-        curr = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
+        curr = df[(df['date'] >= start_date) & (df['date'] <= latest_date)].copy()
         prev = df[(df['date'] >= prev_start) & (df['date'] <= prev_end)].copy()
         
         # --- YTD LOGIC ---
-        current_year = end_date.year
-        ytd_data = df[pd.to_datetime(df['date']).dt.year == current_year].copy()
-        ytd_
+        curr_year = latest_date.year
+        ytd_df = df[pd.to_datetime(df['date']).dt.year == curr_year].copy()
+        ytd_sum = ytd_df.groupby('sku')['quantity'].sum().reset_index()
+
+        # 1. Metrics Header
+        st.markdown(f"**Period:** {start_date} to {latest_date} vs {prev_start} to {prev_end}")
+        col1, col2 = st.columns(2)
+        with col1:
+            val = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
+            old = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
+            st.metric("📸 Weekly Camera Sales", int(val), delta=int(val - old))
+        with col2:
+            val = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
+            old = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
+            st.metric("🎒 Weekly Accessory Sales", int(val), delta=int(val - old))
+
+        st.divider()
+
+        # 2. Weekly Movers (No Zeros)
+        st.subheader("🔥 Weekly Top Movers (Delta > 0 or < 0)")
+        r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
+        p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
+        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c
