@@ -27,6 +27,7 @@ if page == "📦 Inventory":
         m_idx = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}[m_label]
         sku_df = df.iloc[:, [0, m_idx]].copy()
         sku_df.columns = ["SKU", "Stock"]
+        sku_df = sku_df.dropna(subset=["SKU"])
         sku_df["Stock"] = pd.to_numeric(sku_df["Stock"], errors='coerce').fillna(0).astype(int)
 
         def get_cat(sku):
@@ -54,35 +55,38 @@ elif page == "💰 Sales":
 
     try:
         df = load(SALES_GIDS[reg])
-        df.columns = [str(c).strip().lower() for c in df_sales_cols := df.columns]
+        # Fixed the line that caused your SyntaxError
+        df.columns = [str(c).strip().lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date']).dt.date
         df = df[~df['sku'].str.contains('unknown|worry-free', case=False, na=False)]
         
         diff = (end - start).days + 1
-        curr = df[(df['date'] >= start) & (df['date'] <= end)]
-        prev = df[(df['date'] >= (start - timedelta(diff))) & (df['date'] <= (end - timedelta(diff)))]
+        curr = df[(df['date'] >= start) & (df['date'] <= end)].copy()
+        prev = df[(df['date'] >= (start - timedelta(diff))) & (df['date'] <= (end - timedelta(diff)))].copy()
 
         r_tot, p_tot = curr['quantity'].sum(), prev['quantity'].sum()
         st.metric(f"Total Units ({diff} Days)", f"{int(r_tot)}", delta=int(r_tot - p_tot))
 
-        # 1. Model Type Breakdown (Cameras Only)
-        st.subheader("📸 Model Line Comparison (Cameras Only)")
+        # 1. Model Line Comparison (Cameras Only)
+        st.subheader("📸 Model Line Comparison")
         def get_model(sku):
-            s = str(sku).upper()
+            s = str(sku).upper().strip()
             if not any(c in s for c in CAMS): return None
             if s.startswith("MA-"): return "Model A"
             if s.startswith("MC-"): return "Model C"
             if s.startswith("MK-"): return "Model K"
             if s.startswith("MP2-"): return "Model P2"
             if s.startswith("MP-"): return "Model P"
-            return None
+            return "Other Camera"
 
         curr['Model'] = curr['sku'].apply(get_model)
         prev['Model'] = prev['sku'].apply(get_model)
         
-        m_curr = curr.groupby('Model')['quantity'].sum()
-        m_prev = prev.groupby('Model')['quantity'].sum()
+        m_curr = curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
+        m_prev = prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
         m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current', 'Previous']).fillna(0)
         st.table(m_comp.style.format("{:.0f}"))
 
-        # 2. Comparison
+        # 2. Comparison Chart
+        st.subheader("📊 Sales Trend Chart")
+        chart_data =
