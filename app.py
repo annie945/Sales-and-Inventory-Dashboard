@@ -26,20 +26,20 @@ def load(gid): return pd.read_csv(f"{BASE}&gid={gid}")
 def is_cam(s): return any(x in str(s).upper() for x in CAMS)
 def is_acc(s): return any(x in str(s).upper() for x in ACCS)
 
-# --- SIDEBAR NAVIGATION ---
+# --- SIDEBAR ---
 st.sidebar.header("🏢 Channel Select")
 channel = st.sidebar.selectbox("Source", ["Shopify/WH", "Amazon (FBA)"])
 
 st.sidebar.header("📌 Category")
 page = st.sidebar.radio("View", ["📦 Inventory", "💰 Sales Performance"])
 
-# --- INVENTORY PAGE ---
+# --- INVENTORY ---
 if page == "📦 Inventory":
     st.title(f"📦 {channel} Inventory")
     try:
         if channel == "Amazon (FBA)":
             df = load("856174189")
-            m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} # E, L, Z, S
+            m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18}
             markets = ["🇺🇸 US", "🇨🇦 CA", "🇬🇧 UK", "🇦🇺 AU"]
         else:
             df = load("0")
@@ -47,27 +47,23 @@ if page == "📦 Inventory":
             markets = list(GIDS_ORIG.keys())
 
         m_label = st.radio("Market", markets, horizontal=True)
-        m_idx = m_map[m_label]
-        
-        sku_df = df.iloc[:, [0, m_idx]].copy()
+        sku_df = df.iloc[:, [0, m_map[m_label]]].copy()
         sku_df.columns = ["SKU", "Stock"]
         sku_df = sku_df.dropna(subset=["SKU"])
         sku_df["Stock"] = pd.to_numeric(sku_df["Stock"], errors='coerce').fillna(0).astype(int)
 
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("📸 Cameras")
             sub_c = sku_df[sku_df["SKU"].apply(is_cam)]
             st.metric("Total Cameras", f"{sub_c['Stock'].sum():,}")
             st.dataframe(sub_c, hide_index=True, use_container_width=True)
         with c2:
-            st.subheader("🎒 Accessories")
             sub_a = sku_df[sku_df["SKU"].apply(is_acc)]
             st.metric("Total Accessories", f"{sub_a['Stock'].sum():,}")
             st.dataframe(sub_a, hide_index=True, use_container_width=True)
     except Exception as e: st.error(f"Inventory Error: {e}")
 
-# --- SALES PAGE ---
+# --- SALES ---
 elif page == "💰 Sales Performance":
     st.title(f"💰 {channel} Sales")
     current_gids = GIDS_AMZ if channel == "Amazon (FBA)" else GIDS_ORIG
@@ -77,7 +73,6 @@ elif page == "💰 Sales Performance":
         df = load(current_gids[reg])
         df.columns = [str(col).strip().lower() for col in df.columns]
         
-        # Robust Column Search
         s_col = next((c for c in df.columns if 'sku' in c), None)
         q_col = next((c for c in df.columns if 'qty' in c or 'quantity' in c), None)
         d_col = next((c for c in df.columns if 'date' in c), None)
@@ -86,25 +81,25 @@ elif page == "💰 Sales Performance":
             st.error(f"Missing columns! Found: {list(df.columns)}")
         else:
             df = df.rename(columns={s_col: 'sku', q_col: 'quantity', d_col: 'date'})
-            df['date'] = pd.to_datetime(df['date']).dt.date
+            
+            # --- FIXED DATE LOGIC FOR AU ERROR ---
+            df['date'] = pd.to_datetime(df['date'], format='mixed').dt.date
+            
             df = df[~df['sku'].str.contains('unknown|worry|delivery', case=False, na=False)]
-
             lt = df['date'].max()
-            s1 = lt - timedelta(6)
-            p1, p2 = s1 - timedelta(7), s1 - timedelta(1)
+            s1, p1, p2 = lt - timedelta(6), lt - timedelta(13), lt - timedelta(7)
 
             curr = df[(df['date'] >= s1) & (df['date'] <= lt)].copy()
             prev = df[(df['date'] >= p1) & (df['date'] <= p2)].copy()
             y_sm = df[pd.to_datetime(df['date']).dt.year == lt.year].groupby('sku')['quantity'].sum().reset_index()
 
             st.info(f"📅 Week: {s1} to {lt} vs {p1} to {p2}")
-            
-            c1, c2 = st.columns(2)
-            with c1:
+            col1, col2 = st.columns(2)
+            with col1:
                 v = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
                 o = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
                 st.metric("📸 Weekly Camera Units", int(v), delta=int(v-o))
-            with c2:
+            with col2:
                 v = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
                 o = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
                 st.metric("🎒 Weekly Accessory Units", int(v), delta=int(v-o))
@@ -131,7 +126,7 @@ elif page == "💰 Sales Performance":
                 st.dataframe(ac[ac['Delta']<0].nsmallest(3,'Delta')[['Delta']], use_container_width=True)
 
             st.divider()
-            st.subheader(f"🏆 YTD {lt.year} Top 3 Sellers")
+            st.subheader(f"🏆 YTD {lt.year} Top Sellers")
             y1, y2 = st.columns(2)
             with y1:
                 st.info("📸 Camera Top 3 (YTD)")
