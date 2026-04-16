@@ -3,16 +3,18 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # 1. SETUP
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Dashboard")
 
 B = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/export?format=csv"
-G = {
-    "🇺🇸 US": "1304392959",
-    "🇨🇦 CA": "634720426",
-    "🇬🇧 UK": "1657555313",
-    "🇦🇺 AU": "1871282385",
-    "🇪🇺 EU": "975667344"
-}
+
+# GIDs
+US = "1304392959"
+CA = "634720426"
+UK = "1657555313"
+AU = "1871282385"
+EU = "975667344"
+
+# SKU Lists
 C = ["MA-HK","MA-KRM","MA-CMR","MA-MN","MA-MK","MC-MIKAYO","MC-AKITO",
      "MK-MEOWIE","MK-ZIPPY","MK-SP","MP-KOKO","MP-HK","MP-KRM","MP-CMR",
      "MP2-BLUE","MP2-MINT","MP2-SP","MP2-WP","MV-IRIS","MV-IRI"]
@@ -32,9 +34,15 @@ if pg == "📦 Inv":
     st.title("📦 Inventory")
     try:
         df = load("0")
-        m = st.radio("Market", list(G.keys()), horizontal=True)
-        mp = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
-        idx = mp[m]
+        m = st.radio("Market", ["🇺🇸 US", "🇨🇦 CA", "🇬🇧 UK", "🇦🇺 AU", "🇪🇺 EU"], horizontal=True)
+        
+        # Mapping column indices
+        idx = 7 # Default US
+        if m == "🇨🇦 CA": idx = 15
+        if m == "🇬🇧 UK": idx = 22
+        if m == "🇦🇺 AU": idx = 29
+        if m == "🇪🇺 EU": idx = 38
+        
         df_i = df.iloc[:, [0, idx]].copy()
         df_i.columns = ["SKU", "Qty"]
         df_i = df_i.dropna(subset=["SKU"])
@@ -55,25 +63,34 @@ if pg == "📦 Inv":
 # --- SALES ---
 elif pg == "💰 Sales":
     st.title("💰 Sales")
-    r = st.sidebar.selectbox("Region", list(G.keys()))
+    r = st.sidebar.selectbox("Region", ["🇺🇸 US", "🇨🇦 CA", "🇬🇧 UK", "🇦🇺 AU", "🇪🇺 EU"])
+    
+    # Map Region to GID
+    g = US
+    if r == "🇨🇦 CA": g = CA
+    if r == "🇬🇧 UK": g = UK
+    if r == "🇦🇺 AU": g = AU
+    if r == "🇪🇺 EU": g = EU
+    
     try:
-        raw = load(G[r])
+        raw = load(g)
         raw.columns = [str(c).strip().lower() for c in raw.columns]
         raw['date'] = pd.to_datetime(raw['date']).dt.date
         f = raw[~raw['sku'].str.contains('unknown|worry|delivery', case=False, na=False)]
         
         lt = f['date'].max()
         s1 = lt - timedelta(6)
-        p1, p2 = s1 - timedelta(7), s1 - timedelta(1)
+        p1 = s1 - timedelta(7)
+        p2 = s1 - timedelta(1)
         
         cur = f[(f['date'] >= s1) & (f['date'] <= lt)].copy()
         pre = f[(f['date'] >= p1) & (f['date'] <= p2)].copy()
+        
         ytd = f[pd.to_datetime(f['date']).dt.year == lt.year].copy()
 
         st.write(f"Week: {s1} to {lt}")
         col1, col2 = st.columns(2)
         with col1:
-            # ULTRA SHORT LINES
             v = cur[cur['sku'].isin(C)]['quantity'].sum()
             o = pre[pre['sku'].isin(C)]['quantity'].sum()
             st.metric("📸 Cam Week", int(v), delta=int(v-o))
@@ -107,7 +124,7 @@ elif pg == "💰 Sales":
             st.dataframe(ac[ac['D']<0].nsmallest(3,'D')[['D']])
 
         st.divider()
-        st.subheader(f"🏆 YTD {lt.year} Top 3")
+        st.subheader(f"🏆 YTD {lt.year} Top 3 Sellers")
         y1, y2 = st.columns(2)
         with y1:
             st.info("📸 Camera YTD")
@@ -120,4 +137,4 @@ elif pg == "💰 Sales":
     except Exception as e:
         st.error(e)
 
-# END OF FILE
+st.sidebar.caption("System Ready")
