@@ -6,21 +6,36 @@ from datetime import datetime, timedelta
 st.set_page_config(layout="wide", page_title="Dashboard")
 
 B = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/export?format=csv"
-G = {"🇺🇸 US":"1304392959","🇨🇦 CA":"634720426","🇬🇧 UK":"1657555313","🇦🇺 AU":"1871282385","🇪🇺 EU":"975667344"}
-C = ["MA-HK","MA-KRM","MA-CMR","MA-MN","MA-MK","MC-MIKAYO","MC-AKITO","MK-MEOWIE","MK-ZIPPY","MK-SP","MP-KOKO","MP-HK","MP-KRM","MP-CMR","MP2-BLUE","MP2-MINT","MP2-SP","MP2-WP","MV-IRIS","MV-IRI"]
-A = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT","BAG-UNICORN","BAG-KMTGREEN","BAG-LITTLEBEE","BAG-HK","BAG-KRM","BAG-CMR","LANYARD-GREEN","LANYARD-PINK","LANYARD-RED","LANYARD-PURPLE"]
+G = {
+    "🇺🇸 US": "1304392959",
+    "🇨🇦 CA": "634720426",
+    "🇬🇧 UK": "1657555313",
+    "🇦🇺 AU": "1871282385",
+    "🇪🇺 EU": "975667344"
+}
+C = ["MA-HK","MA-KRM","MA-CMR","MA-MN","MA-MK","MC-MIKAYO","MC-AKITO",
+     "MK-MEOWIE","MK-ZIPPY","MK-SP","MP-KOKO","MP-HK","MP-KRM","MP-CMR",
+     "MP2-BLUE","MP2-MINT","MP2-SP","MP2-WP","MV-IRIS","MV-IRI"]
+A = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT",
+     "BAG-UNICORN","BAG-KMTGREEN","BAG-LITTLEBEE","BAG-HK","BAG-KRM",
+     "BAG-CMR","LANYARD-GREEN","LANYARD-PINK","LANYARD-RED","LANYARD-PURPLE"]
 
 @st.cache_data(ttl=300)
-def load(gid): return pd.read_csv(f"{B}&gid={gid}")
+def load(gid):
+    url = f"{B}&gid={gid}"
+    return pd.read_csv(url)
 
-def is_c(s): return any(x in str(s).upper() for x in C)
-def is_a(s): return any(x in str(s).upper() for x in A)
+def is_c(s):
+    return any(x in str(s).upper() for x in C)
+
+def is_a(s):
+    return any(x in str(s).upper() for x in A)
 
 pg = st.sidebar.radio("Nav", ["📦 Inv", "💰 Sales"])
 
 # --- INVENTORY ---
 if pg == "📦 Inv":
-    st.title("📦 Inventory")
+    st.title("📦 Inventory Stock")
     try:
         df = load("0")
         m = st.radio("Market", list(G.keys()), horizontal=True)
@@ -34,12 +49,13 @@ if pg == "📦 Inv":
         with c1:
             sc = df_i[df_i["SKU"].apply(is_c)]
             st.metric("Cameras", f"{sc['Qty'].sum():,}")
-            st.dataframe(sc, hide_index=True)
+            st.dataframe(sc, hide_index=True, use_container_width=True)
         with c2:
             sa = df_i[df_i["SKU"].apply(is_a)]
             st.metric("Accessories", f"{sa['Qty'].sum():,}")
-            st.dataframe(sa, hide_index=True)
-    except Exception as e: st.error(e)
+            st.dataframe(sa, hide_index=True, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error: {e}")
 
 # --- SALES ---
 elif pg == "💰 Sales":
@@ -60,7 +76,55 @@ elif pg == "💰 Sales":
         ytd = df[pd.to_datetime(df['date']).dt.year == lt.year].copy()
         y_sm = ytd.groupby('sku')['quantity'].sum().reset_index()
 
-        st.write(f"Week: {s1} to {lt}")
+        st.write(f"**Period:** {s1} to {lt} (vs {p1} to {p2})")
         c1, c2 = st.columns(2)
         with c1:
-            v = cur[cur['sku'].apply(
+            v = cur[cur['sku'].apply(is_c)]['quantity'].sum()
+            o = pre[pre['sku'].apply(is_c)]['quantity'].sum()
+            st.metric("📸 Cam Week", int(v), delta=int(v-o))
+        with c2:
+            v = cur[cur['sku'].apply(is_a)]['quantity'].sum()
+            o = pre[pre['sku'].apply(is_a)]['quantity'].sum()
+            st.metric("🎒 Acc Week", int(v), delta=int(v-o))
+
+        st.divider()
+        st.subheader("🔥 Weekly Movers")
+        r_s = cur.groupby('sku')['quantity'].sum()
+        p_s = pre.groupby('sku')['quantity'].sum()
+        cp = pd.merge(
+            r_s, p_s, on='sku', how='outer', suffixes=('_c', '_p')
+        ).fillna(0)
+        cp['D'] = cp['quantity_c'] - cp['quantity_p']
+        
+        m1, m2, m3, m4 = st.columns(4)
+        cm, ac = cp[cp.index.map(is_c)], cp[cp.index.map(is_a)]
+        with m1:
+            st.success("📈 Cam Inc")
+            st.dataframe(cm[cm['D']>0].nlargest(3,'D')[['D']], use_container_width=True)
+        with m2:
+            st.error("📉 Cam Dec")
+            st.dataframe(cm[cm['D']<0].nsmallest(3,'D')[['D']], use_container_width=True)
+        with m3:
+            st.success("📈 Acc Inc")
+            st.dataframe(ac[ac['D']>0].nlargest(3,'D')[['D']], use_container_width=True)
+        with m4:
+            st.error("📉 Acc Dec")
+            st.dataframe(ac[ac['D']<0].nsmallest(3,'D')[['D']], use_container_width=True)
+
+        st.divider()
+        st.subheader(f"🏆 YTD {lt.year} Top Sellers")
+        y1, y2 = st.columns(2)
+        with y1:
+            st.info("📸 Camera Top 3 (YTD)")
+            st.dataframe(
+                y_sm[y_sm['sku'].apply(is_c)].nlargest(3,'quantity'), 
+                hide_index=True, use_container_width=True
+            )
+        with y2:
+            st.info("🎒 Accessory Top 3 (YTD)")
+            st.dataframe(
+                y_sm[y_sm['sku'].apply(is_a)].nlargest(3,'quantity'), 
+                hide_index=True, use_container_width=True
+            )
+    except Exception as e:
+        st.error(f"Error: {e}")
