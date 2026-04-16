@@ -15,19 +15,29 @@ st.markdown("""
 FORECAST_SHEET_ID = "1elePyM-HdtFc382VsSac8PD4NQrUSXZF9qypCzyzcCc" 
 MAIN_SHEET_ID = "1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
 
-# GIDs
+# GIDs (Live Inventory & Sales)
 GIDS_ORIG = {"🇺🇸 US": "1304392959", "🇨🇦 CA": "634720426", "🇬🇧 UK": "1657555313", "🇦🇺 AU": "1871282385", "🇪🇺 EU": "975667344"}
 GIDS_AMZ = {"🇺🇸 US": "1758192113", "🇨🇦 CA": "297394922", "🇬🇧 UK": "1202968115", "🇦🇺 AU": "1435942430"}
-GIDS_FOR_MONTHS = {"🇺🇸 US": "2053646844", "🇨🇦 CA": "1132992902", "🇪🇺 EU": "314290170", "🇦🇺 AU": "592032183", "🇬🇧 UK": "1664038544"}
+
+# GIDs (Monthly Forecast Demand)
+GIDS_FOR_MONTHS = {
+    "Shopify/WH": {
+        "🇺🇸 US": "2053646844", "🇨🇦 CA": "1132992902", "🇪🇺 EU": "314290170", "🇦🇺 AU": "592032183", "🇬🇧 UK": "1664038544"
+    },
+    "Amazon (FBA)": {
+        "🇺🇸 US": "1911531717", "🇨🇦 CA": "749217991"
+    }
+}
 GID_SAFETY_SOURCE = "2100066410"
 
-# --- REGION RANGES FOR SHOPIFY SAFETY STOCK ---
+# --- REGION RANGES FOR SAFETY STOCK (GID 2100066410) ---
 REGION_RANGES = {
-    "🇺🇸 US": (1, 21),    # Rows 3-22
-    "🇨🇦 CA": (22, 42),   # Rows 24-43
-    "🇬🇧 UK": (44, 64),   # Rows 46-65
-    "🇪🇺 EU": (66, 86),   # Rows 68-87
-    "🇦🇺 AU": (88, 108)   # Rows 90-109
+    "Shopify/WH": {
+        "🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)
+    },
+    "Amazon (FBA)": {
+        "🇺🇸 US": (110, 130), "🇨🇦 CA": (131, 151)
+    }
 }
 
 CAMS = ["MA-","MC-","MK-","MP-","MV-"]
@@ -56,7 +66,7 @@ page = st.sidebar.radio("View", ["📦 Inventory & Risk", "💰 Sales Performanc
 if page == "📦 Inventory & Risk":
     st.title(f"📦 {chan} Inventory & Risk Analysis")
     try:
-        # Load Inventory
+        # Load Inventory Stock
         inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
         df_inv = load_csv(MAIN_SHEET_ID, inv_gid)
         m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
@@ -67,39 +77,47 @@ if page == "📦 Inventory & Risk":
         s_df = s_df[s_df["SKU"].apply(is_valid_sku)]
         s_df["Stock"] = pd.to_numeric(s_df["Stock"], errors='coerce').fillna(0).astype(int)
 
-        # --- RISK ANALYSIS: ONLY FOR SHOPIFY/WH ---
-        if chan == "Shopify/WH":
+        # --- DYNAMIC RISK ANALYSIS (Shared Shopify & Amazon Logic) ---
+        if m_sel in GIDS_FOR_MONTHS[chan]:
             st.subheader(f"🚨 3-Month Out-of-Stock Risk ({m_sel})")
-            # 1. Slice Safety Stock by Region Range
+            
+            # Load Safety Stock Slice
             safety_full = load_csv(FORECAST_SHEET_ID, GID_SAFETY_SOURCE)
-            r_start, r_end = REGION_RANGES[m_sel]
+            r_start, r_end = REGION_RANGES[chan][m_sel]
             safety_df = safety_full.iloc[r_start:r_end].copy()
             safety_df.columns = [str(c).strip() for c in safety_df.columns]
             
-            # 2. Monthly Forecast
-            f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[m_sel])
+            # Load Forecast Demand
+            f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
             f_df.columns = [str(c).strip() for c in f_df.columns]
-            target_months = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
+            
+            today = datetime.now()
+            target_months = [(today.replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
 
             risk_data = []
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip()
                 if not is_valid_sku(sku): continue
+                
                 demand_3m = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
                 safe_row = safety_df[safety_df.iloc[:, 0].str.lower().str.strip() == sku.lower()]
                 safety = pd.to_numeric(safe_row.iloc[0, 2], errors='coerce') if not safe_row.empty else 0
+                
                 live_val = s_df[s_df["SKU"].str.lower().str.strip() == sku.lower()]["Stock"].sum()
                 balance = live_val - demand_3m - safety
+                
                 if balance < 0:
                     risk_data.append({"SKU": sku.upper(), "Live Stock": int(live_val), "3m Demand": int(demand_3m), "Safety": int(safety), "Shortage": int(abs(balance))})
 
             if risk_data:
-                st.error(f"⚠️ {len(risk_data)} SKUs at risk for {m_sel}.")
+                st.error(f"⚠️ {len(risk_data)} SKUs estimated to go OOS in {m_sel}.")
                 st.dataframe(pd.DataFrame(risk_data).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
-            else: st.success(f"✅ {m_sel} stock levels look healthy.")
+            else: st.success(f"✅ Stock levels for {m_sel} appear healthy.")
             st.divider()
+        else:
+            st.info(f"💡 Forecast/Risk analysis for {chan} {m_sel} is not yet configured.")
 
-        # Display Stock Tables for Both Shopify and AMZ
+        # Display Standard Inventory Tables
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("📸 Cameras")
@@ -108,9 +126,9 @@ if page == "📦 Inventory & Risk":
             st.subheader("🎒 Accessories")
             st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
 
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: st.error(f"Inventory Error: {e}")
 
-# --- SALES PERFORMANCE (FULL RESTORATION) ---
+# --- SALES PERFORMANCE (FULLY PRESERVED) ---
 elif page == "💰 Sales Performance":
     st.title(f"💰 {chan} Sales Performance")
     active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
