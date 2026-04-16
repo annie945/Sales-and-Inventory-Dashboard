@@ -44,7 +44,8 @@ if page == "📦 Inventory":
             sub_a = sku_df[sku_df["SKU"].apply(is_acc)]
             st.metric("Total Accessories", f"{sub_a['Stock'].sum():,}")
             st.dataframe(sub_a, use_container_width=True, hide_index=True)
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e:
+        st.error(f"Inventory Error: {e}")
 
 # --- SALES ---
 elif page == "💰 Sales":
@@ -66,7 +67,12 @@ elif page == "💰 Sales":
         ytd_sum = ytd.groupby('sku')['quantity'].sum().reset_index()
 
         st.write(f"**Weekly View:** {start} to {latest} (vs {p_start} to {p_end})")
-        c1, c2 = st.columns(2)
+        c1, col2 = st.columns(2)
         with c1:
             v = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
-            o = prev[prev['sku'].apply(is_cam)]
+            o = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
+            st.metric("📸 Weekly Camera", int(v), delta=int(v-o))
+        with col2:
+            v = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
+            o = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
+            st.metric("🎒 Weekly Accessory", int(
