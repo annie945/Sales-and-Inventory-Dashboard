@@ -2,18 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 1. Setup & Styling
-st.set_page_config(layout="wide", page_title="Global Inventory & Sales Pro")
-
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { font-size: 28px; color: #1f77b4; }
-    .main { background-color: #f8f9fa; }
-    </style>
-    """, unsafe_allow_html=True)
+# 1. Setup
+st.set_page_config(layout="wide", page_title="Global Inventory & Sales")
 
 BASE = "https://docs.google.com/spreadsheets/d/1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs/export?format=csv"
-SALES_GIDS = {
+GIDS = {
     "🇺🇸 US": "1304392959", "🇨🇦 CA": "634720426", "🇬🇧 UK": "1657555313",
     "🇦🇺 AU": "1871282385", "🇪🇺 EU": "975667344"
 }
@@ -23,17 +16,17 @@ ACCS = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT","BAG-U
 @st.cache_data(ttl=300)
 def load(gid): return pd.read_csv(f"{BASE}&gid={gid}")
 
-page = st.sidebar.radio("Navigation", ["📦 Inventory Overview", "💰 Sales Performance"])
+def is_cam(s): return any(x in str(s).upper() for x in CAMS)
+def is_acc(s): return any(x in str(s).upper() for x in ACCS)
 
-def is_cam(sku): return any(x in str(sku).upper() for x in CAMS)
-def is_acc(sku): return any(x in str(sku).upper() for x in ACCS)
+page = st.sidebar.radio("Navigation", ["📦 Inventory", "💰 Sales"])
 
-# --- INVENTORY PAGE ---
-if page == "📦 Inventory Overview":
+# --- INVENTORY ---
+if page == "📦 Inventory":
     st.title("📦 Inventory Stock")
     try:
         df = load("0")
-        m_label = st.radio("Select Market:", list(SALES_GIDS.keys()), horizontal=True)
+        m_label = st.radio("Market:", list(GIDS.keys()), horizontal=True)
         m_idx = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}[m_label]
         sku_df = df.iloc[:, [0, m_idx]].copy()
         sku_df.columns = ["SKU", "Stock"]
@@ -44,55 +37,85 @@ if page == "📦 Inventory Overview":
         with c1:
             st.subheader("📸 Cameras")
             sub_c = sku_df[sku_df["SKU"].apply(is_cam)]
-            st.metric("Total Camera Stock", f"{sub_c['Stock'].sum():,}")
+            st.metric("Total Cameras", f"{sub_c['Stock'].sum():,}")
             st.dataframe(sub_c, use_container_width=True, hide_index=True)
         with c2:
             st.subheader("🎒 Accessories")
             sub_a = sku_df[sku_df["SKU"].apply(is_acc)]
-            st.metric("Total Accessory Stock", f"{sub_a['Stock'].sum():,}")
+            st.metric("Total Accessories", f"{sub_a['Stock'].sum():,}")
             st.dataframe(sub_a, use_container_width=True, hide_index=True)
     except Exception as e: st.error(f"Error: {e}")
 
-# --- SALES PAGE ---
-elif page == "💰 Sales Performance":
+# --- SALES ---
+elif page == "💰 Sales":
     st.title("💰 Weekly & YTD Performance")
-    reg = st.sidebar.selectbox("Region", list(SALES_GIDS.keys()))
-
+    reg = st.sidebar.selectbox("Region", list(GIDS.keys()))
     try:
-        df = load(SALES_GIDS[reg])
+        df = load(GIDS[reg])
         df.columns = [str(c).strip().lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date']).dt.date
         df = df[~df['sku'].str.contains('unknown|worry-free|delivery', case=False, na=False)]
 
-        # --- WEEKLY LOGIC ---
-        latest_date = df['date'].max()
-        start_date = latest_date - timedelta(days=6)
-        prev_start, prev_end = start_date - timedelta(days=7), start_date - timedelta(days=1)
+        latest = df['date'].max()
+        start = latest - timedelta(days=6)
+        p_start, p_end = start - timedelta(days=7), start - timedelta(days=1)
 
-        curr = df[(df['date'] >= start_date) & (df['date'] <= latest_date)].copy()
-        prev = df[(df['date'] >= prev_start) & (df['date'] <= prev_end)].copy()
-        
-        # --- YTD LOGIC ---
-        curr_year = latest_date.year
-        ytd_df = df[pd.to_datetime(df['date']).dt.year == curr_year].copy()
-        ytd_sum = ytd_df.groupby('sku')['quantity'].sum().reset_index()
+        curr = df[(df['date'] >= start) & (df['date'] <= latest)].copy()
+        prev = df[(df['date'] >= p_start) & (df['date'] <= p_end)].copy()
+        ytd = df[pd.to_datetime(df['date']).dt.year == latest.year].copy()
+        ytd_sum = ytd.groupby('sku')['quantity'].sum().reset_index()
 
-        # 1. Metrics Header
-        st.markdown(f"**Period:** {start_date} to {latest_date} vs {prev_start} to {prev_end}")
-        col1, col2 = st.columns(2)
-        with col1:
-            val = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
-            old = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric("📸 Weekly Camera Sales", int(val), delta=int(val - old))
-        with col2:
-            val = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
-            old = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
-            st.metric("🎒 Weekly Accessory Sales", int(val), delta=int(val - old))
+        st.write(f"**Period:** {start} to {latest} (vs {p_start} to {p_end})")
+        c1, c2 = st.columns(2)
+        with c1:
+            v = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
+            o = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
+            st.metric("📸 Weekly Camera", int(v), delta=int(v-o))
+        with c2:
+            v = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
+            o = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
+            st.metric("🎒 Weekly Accessory", int(v), delta=int(v-o))
 
         st.divider()
+        st.subheader("🔥 Weekly Movers")
+        r_s = curr.groupby('sku')['quantity'].sum().reset_index()
+        p_s = prev.groupby('sku')['quantity'].sum().reset_index()
+        # FIXED: Wrapped long line to prevent cut-offs
+        comp = pd.merge(r_s, p_s, on='sku', how='outer', 
+                        suffixes=('_c', '_p')).fillna(0)
+        comp['Delta'] = comp['quantity_c'] - comp['quantity_p']
+        
+        c_w, c_l, a_w, a_l = st.columns(4)
+        cm, ac = comp[comp['sku'].apply(is_cam)], comp[comp['sku'].apply(is_acc)]
+        
+        with c_w:
+            st.success("📈 Cam Inc")
+            st.dataframe(cm[cm['Delta']>0].nlargest(3,'Delta')[['sku','Delta']], hide_index=True)
+        with c_l:
+            st.error("📉 Cam Dec")
+            st.dataframe(cm[cm['Delta']<0].nsmallest(3,'Delta')[['sku','Delta']], hide_index=True)
+        with a_w:
+            st.success("📈 Acc Inc")
+            st.dataframe(ac[ac['Delta']>0].nlargest(3,'Delta')[['sku','Delta']], hide_index=True)
+        with a_l:
+            st.error("📉 Acc Dec")
+            st.dataframe(ac[ac['Delta']<0].nsmallest(3,'Delta')[['sku','Delta']], hide_index=True)
 
-        # 2. Weekly Movers (No Zeros)
-        st.subheader("🔥 Weekly Top Movers (Delta > 0 or < 0)")
-        r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
-        p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
-        comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c
+        st.divider()
+        st.subheader(f"🏆 YTD {latest.year} Rankings")
+        yc1, yc2 = st.columns(2)
+        with yc1:
+            st.info("📸 Camera (YTD)")
+            y_c = ytd_sum[ytd_sum['sku'].apply(is_cam)]
+            st.write("Top 3 Sellers")
+            st.dataframe(y_c.nlargest(3,'quantity'), hide_index=True)
+            st.write("Bottom 3 Performers")
+            st.dataframe(y_c.nsmallest(3,'quantity'), hide_index=True)
+        with yc2:
+            st.info("🎒 Accessory (YTD)")
+            y_a = ytd_sum[ytd_sum['sku'].apply(is_acc)]
+            st.write("Top 3 Sellers")
+            st.dataframe(y_a.nlargest(3,'quantity'), hide_index=True)
+            st.write("Bottom 3 Performers")
+            st.dataframe(y_a.nsmallest(3,'quantity'), hide_index=True)
+    except Exception as e: st.error(f"Error: {e}")
