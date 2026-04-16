@@ -16,9 +16,8 @@ ACCS = ["MP2-PP-40","MP2-PP-120","MICROSD-32","MP-PAPER","TML-TML-SPROUT","BAG-U
 @st.cache_data(ttl=300)
 def load(gid): return pd.read_csv(f"{BASE}&gid={gid}")
 
-page = st.sidebar.radio("Menu", ["📦 Inventory", "💰 Sales"])
+page = st.sidebar.radio("Menu", ["📦 Inventory", "💰 Sales Performance"])
 
-# --- INVENTORY PAGE ---
 if page == "📦 Inventory":
     st.title("Inventory Stock")
     try:
@@ -45,32 +44,47 @@ if page == "📦 Inventory":
                 st.dataframe(sub[["SKU", "Stock"]], use_container_width=True, hide_index=True)
     except Exception as e: st.error(f"Error: {e}")
 
-# --- SALES PAGE ---
-elif page == "💰 Sales":
+elif page == "💰 Sales Performance":
     st.title("Sales Analysis")
-    reg = st.selectbox("Region", list(SALES_GIDS.keys()))
-    d1, d2 = st.columns(2)
-    with d1: start = st.date_input("From", datetime.now() - timedelta(7))
-    with d2: end = st.date_input("To", datetime.now())
+    reg = st.selectbox("Select Region", list(SALES_GIDS.keys()))
 
     try:
         df = load(SALES_GIDS[reg])
         df.columns = [str(c).strip().lower() for c in df.columns]
         df['date'] = pd.to_datetime(df['date']).dt.date
         df = df[~df['sku'].str.contains('unknown|worry-free', case=False, na=False)]
-        
-        diff = (end - start).days + 1
-        curr = df[(df['date'] >= start) & (df['date'] <= end)].copy()
-        prev = df[(df['date'] >= (start - timedelta(diff))) & (df['date'] <= (end - timedelta(diff)))].copy()
 
-        r_tot, p_tot = curr['quantity'].sum(), prev['quantity'].sum()
-        st.metric(f"Total Units ({diff} Days)", f"{int(r_tot)}", delta=int(r_tot - p_tot))
+        # --- Automatic Weekly Logic ---
+        end_date = df['date'].max()
+        start_date = end_date - timedelta(days=6)
+        prev_end = start_date - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=6)
 
-        # 1. Model Comparison (Cameras Only)
-        st.subheader("📸 Model Line Comparison")
+        curr_range_str = f"{start_date} to {end_date}"
+        prev_range_str = f"{prev_start} to {prev_end}"
+
+        curr = df[(df['date'] >= start_date) & (df['date'] <= end_date)].copy()
+        prev = df[(df['date'] >= prev_start) & (df['date'] <= prev_end)].copy()
+
+        # --- 1. Top Metrics (Camera vs Accessory) ---
+        def is_cam(sku): return any(x in str(sku).upper() for x in CAMS)
+        def is_acc(sku): return any(x in str(sku).upper() for x in ACCS)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            curr_c = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
+            prev_c = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
+            st.metric(f"📸 Camera Sales ({curr_range_str})", f"{int(curr_c)}", delta=int(curr_c - prev_c))
+        with c2:
+            curr_a = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
+            prev_a = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
+            st.metric(f"🎒 Accessory Sales ({curr_range_str})", f"{int(curr_a)}", delta=int(curr_a - prev_a))
+
+        # --- 2. Monthly Trend Chart by Model (Full History) ---
+        st.subheader("📈 Monthly Sales Trend per Model (All Time)")
         def get_model(sku):
             s = str(sku).upper().strip()
-            if not any(c in s for c in CAMS): return None
+            if not is_cam(s): return None
             if s.startswith("MA-"): return "Model A"
             if s.startswith("MC-"): return "Model C"
             if s.startswith("MK-"): return "Model K"
@@ -78,24 +92,30 @@ elif page == "💰 Sales":
             if s.startswith("MP-"): return "Model P"
             return "Other Camera"
 
+        df_trend = df.copy()
+        df_trend['Model'] = df_trend['sku'].apply(get_model)
+        df_trend = df_trend.dropna(subset=['Model'])
+        df_trend['Month'] = pd.to_datetime(df_trend['date']).dt.to_period('M').astype(str)
+        
+        trend_pivot = df_trend.groupby(['Month', 'Model'])['quantity'].sum().unstack().fillna(0)
+        st.line_chart(trend_pivot)
+
+        # --- 3. Weekly Model Comparison Table ---
+        st.subheader(f"📊 Model Breakdown: {curr_range_str} vs {prev_range_str}")
         curr['Model'] = curr['sku'].apply(get_model)
         prev['Model'] = prev['sku'].apply(get_model)
         m_curr = curr.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
         m_prev = prev.dropna(subset=['Model']).groupby('Model')['quantity'].sum()
-        m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current', 'Previous']).fillna(0)
+        m_comp = pd.concat([m_curr, m_prev], axis=1, keys=['Current Week', 'Previous Week']).fillna(0)
         st.table(m_comp.style.format("{:.0f}"))
 
-        # 2. Comparison Chart
-        st.subheader("📊 Sales Trend Chart")
-        chart_df = pd.DataFrame({"Period": ["Prev", "Current"], "Units": [p_tot, r_tot]})
-        st.bar_chart(data=chart_df, x="Period", y="Units")
-
-        # 3. Individual SKU Details
-        st.subheader("📦 SKU Performance Detail")
+        # --- 4. Individual SKU Details ---
+        st.subheader("📦 SKU Performance Details")
         r_sku = curr.groupby('sku')['quantity'].sum().reset_index()
         p_sku = prev.groupby('sku')['quantity'].sum().reset_index()
         comp = pd.merge(r_sku, p_sku, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
         comp['Change'] = comp['quantity_c'] - comp['quantity_p']
-        comp.columns = ["SKU", "Current", "Previous", "Change"]
-        st.dataframe(comp.sort_values('Current', ascending=False), use_container_width=True, hide_index=True)
+        comp.columns = ["SKU", "Current Week", "Prev Week", "Change"]
+        st.dataframe(comp.sort_values('Current Week', ascending=False), use_container_width=True, hide_index=True)
+
     except Exception as e: st.error(f"Error: {e}")
