@@ -65,57 +65,8 @@ elif page == "💰 Sales":
         ytd = df[pd.to_datetime(df['date']).dt.year == latest.year].copy()
         ytd_sum = ytd.groupby('sku')['quantity'].sum().reset_index()
 
-        st.write(f"**Period:** {start} to {latest} (vs {p_start} to {p_end})")
+        st.write(f"**Weekly View:** {start} to {latest} (vs {p_start} to {p_end})")
         c1, c2 = st.columns(2)
         with c1:
             v = curr[curr['sku'].apply(is_cam)]['quantity'].sum()
-            o = prev[prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric("📸 Weekly Camera", int(v), delta=int(v-o))
-        with c2:
-            v = curr[curr['sku'].apply(is_acc)]['quantity'].sum()
-            o = prev[prev['sku'].apply(is_acc)]['quantity'].sum()
-            st.metric("🎒 Weekly Accessory", int(v), delta=int(v-o))
-
-        st.divider()
-        st.subheader("🔥 Weekly Movers")
-        r_s = curr.groupby('sku')['quantity'].sum().reset_index()
-        p_s = prev.groupby('sku')['quantity'].sum().reset_index()
-        # FIXED: Wrapped long line to prevent cut-offs
-        comp = pd.merge(r_s, p_s, on='sku', how='outer', 
-                        suffixes=('_c', '_p')).fillna(0)
-        comp['Delta'] = comp['quantity_c'] - comp['quantity_p']
-        
-        c_w, c_l, a_w, a_l = st.columns(4)
-        cm, ac = comp[comp['sku'].apply(is_cam)], comp[comp['sku'].apply(is_acc)]
-        
-        with c_w:
-            st.success("📈 Cam Inc")
-            st.dataframe(cm[cm['Delta']>0].nlargest(3,'Delta')[['sku','Delta']], hide_index=True)
-        with c_l:
-            st.error("📉 Cam Dec")
-            st.dataframe(cm[cm['Delta']<0].nsmallest(3,'Delta')[['sku','Delta']], hide_index=True)
-        with a_w:
-            st.success("📈 Acc Inc")
-            st.dataframe(ac[ac['Delta']>0].nlargest(3,'Delta')[['sku','Delta']], hide_index=True)
-        with a_l:
-            st.error("📉 Acc Dec")
-            st.dataframe(ac[ac['Delta']<0].nsmallest(3,'Delta')[['sku','Delta']], hide_index=True)
-
-        st.divider()
-        st.subheader(f"🏆 YTD {latest.year} Rankings")
-        yc1, yc2 = st.columns(2)
-        with yc1:
-            st.info("📸 Camera (YTD)")
-            y_c = ytd_sum[ytd_sum['sku'].apply(is_cam)]
-            st.write("Top 3 Sellers")
-            st.dataframe(y_c.nlargest(3,'quantity'), hide_index=True)
-            st.write("Bottom 3 Performers")
-            st.dataframe(y_c.nsmallest(3,'quantity'), hide_index=True)
-        with yc2:
-            st.info("🎒 Accessory (YTD)")
-            y_a = ytd_sum[ytd_sum['sku'].apply(is_acc)]
-            st.write("Top 3 Sellers")
-            st.dataframe(y_a.nlargest(3,'quantity'), hide_index=True)
-            st.write("Bottom 3 Performers")
-            st.dataframe(y_a.nsmallest(3,'quantity'), hide_index=True)
-    except Exception as e: st.error(f"Error: {e}")
+            o = prev[prev['sku'].apply(is_cam)]
