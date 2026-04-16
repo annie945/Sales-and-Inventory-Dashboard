@@ -27,9 +27,16 @@ GIDS_FOR_MONTHS = {
 GID_SAFETY_SOURCE = "2100066410"
 GID_PO_GRID = "1801670245" 
 
-# --- CATEGORY DEFINITIONS ---
-CAMS = ["MA-","MC-","MK-","MP-","MV-"]
-ACCS = ["MP2-","MICROSD","TML-","BAG-","LANYARD", "PAPER"]
+# --- REGION RANGES FOR SAFETY STOCK ---
+REGION_RANGES = {
+    "Shopify/WH": {"🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)},
+    "Amazon (FBA)": {"🇺🇸 US": (110, 130), "🇨🇦 CA": (131, 151)}
+}
+
+# --- CATEGORY LOGIC ---
+CAMS_PREFIX = ["MA-","MC-","MK-","MP-","MV-"]
+MP2_CAMS = ["MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP"]
+ACCS_KEYWORDS = ["MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"]
 
 @st.cache_data(ttl=300)
 def load_csv(sheet_id, gid):
@@ -40,12 +47,15 @@ def is_valid_sku(s):
     s = str(s).upper().strip()
     noise = ["WORRY FREE", "DELIVERY", "PROTECTION", "NAN", "TOTAL", "HEALTH", "RISK", "ATTENTION", "SKU"]
     if any(x in s for x in noise) or s == "": return False
-    return any(x in s for x in CAMS + ACCS)
+    return any(x in s for x in CAMS_PREFIX + ACCS_KEYWORDS)
 
 def is_cam(s):
-    s = str(s).upper()
-    if "PAPER" in s: return False # Move paper to accessories
-    return any(s.startswith(x) for x in CAMS)
+    s = str(s).upper().strip()
+    if s in MP2_CAMS: return True
+    if "PAPER" in s: return False
+    # If it's another MP2 (like mp2-pp), it's an accessory
+    if s.startswith("MP2-") and s not in MP2_CAMS: return False
+    return any(s.startswith(x) for x in CAMS_PREFIX)
 
 def get_filtered_po_data(channel, region_label):
     try:
@@ -64,21 +74,61 @@ def get_filtered_po_data(channel, region_label):
     except: return pd.DataFrame()
 
 # --- SIDEBAR ---
-st.sidebar.title("🛠️ Controls")
 chan = st.sidebar.selectbox("Sales Channel", ["Shopify/WH", "Amazon (FBA)"])
 page = st.sidebar.radio("Dashboard View", ["📦 Inventory & Risk", "💰 Sales Performance"])
 
-# --- PAGE 1: INVENTORY & RISK ---
+# --- INVENTORY & RISK ---
 if page == "📦 Inventory & Risk":
-    st.title(f"📦 {chan} Pipeline & Risk")
+    st.title(f"📦 {chan} Inventory & Risk")
     m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
-    m_sel = st.radio("Region Selection", list(m_map.keys()), horizontal=True)
+    m_sel = st.radio("Market", list(m_map.keys()), horizontal=True)
     
     df_po = get_filtered_po_data(chan, m_sel)
+    po_sum = pd.DataFrame(columns=['SKU', 'Qty'])
     if not df_po.empty:
-        st.subheader("🚚 Active Inbound Orders")
+        st.subheader("🚚 Inbound Pipeline")
         st.dataframe(df_po, use_container_width=True, hide_index=True)
-    
+        po_sum = df_po.groupby('SKU')['Qty'].sum().reset_index()
+
+    # 3-Month Risk Analysis
+    if m_sel in GIDS_FOR_MONTHS[chan]:
+        st.subheader(f"🚨 3-Month Out-of-Stock Risk ({m_sel})")
+        try:
+            safety_full = load_csv(FORECAST_SHEET_ID, GID_SAFETY_SOURCE)
+            r_start, r_end = REGION_RANGES[chan][m_sel]
+            safety_df = safety_full.iloc[r_start:r_end].copy()
+            safety_df.columns = [str(c).strip() for c in safety_df.columns]
+            
+            f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
+            f_df.columns = [str(c).strip() for c in f_df.columns]
+            target_months = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
+            
+            inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
+            df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
+            risk_inv = df_inv_risk.iloc[:, [0, m_map[m_sel]]].copy()
+            risk_inv.columns = ["SKU", "Stock"]
+            risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int)
+
+            risk_list = []
+            for _, row in f_df.iterrows():
+                sku = str(row.iloc[0]).strip()
+                if not is_valid_sku(sku): continue
+                demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
+                safe_val = pd.to_numeric(safety_df[safety_df.iloc[:,0].str.lower().str.strip()==sku.lower()].iloc[0,2], errors='coerce') if not safety_df[safety_df.iloc[:,0].str.lower().str.strip()==sku.lower()].empty else 0
+                
+                live = risk_inv[risk_inv["SKU"].str.lower().str.strip()==sku.lower()]["Stock"].sum()
+                inbound = po_sum[po_sum["SKU"].str.lower().str.strip()==sku.lower()]["Qty"].sum()
+                
+                balance = (live + inbound) - demand - safe_val
+                if balance < 0:
+                    risk_list.append({"SKU": sku.upper(), "Stock": int(live), "Inbound": int(inbound), "3m Forecast": int(demand), "Shortage": int(abs(balance))})
+            
+            if risk_list:
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
+                st.dataframe(pd.DataFrame(risk_list).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
+            else: st.success("✅ Forecast demand met.")
+        except Exception as e: st.warning(f"Risk calculation error: {e}")
+
     st.divider()
     
     df_inv = load_csv(MAIN_SHEET_ID, "856174189" if chan == "Amazon (FBA)" else "0")
@@ -88,83 +138,71 @@ if page == "📦 Inventory & Risk":
     s_df["Stock"] = pd.to_numeric(s_df["Stock"], errors='coerce').fillna(0).astype(int)
     
     col_a, col_b = st.columns(2)
-    with col_a:
-        st.subheader("📸 Camera Stock")
-        st.dataframe(s_df[s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
-    with col_b:
-        st.subheader("🎒 Accessory Stock")
-        st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+    with col_a: st.subheader("📸 Cameras"); st.dataframe(s_df[s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+    with col_b: st.subheader("🎒 Accessories"); st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
 
-# --- PAGE 2: SALES PERFORMANCE ---
+# --- SALES PERFORMANCE ---
 elif page == "💰 Sales Performance":
     st.title(f"💰 {chan} Sales Performance")
     active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
     reg = st.sidebar.selectbox("Region", list(active_gids.keys()))
-    
     try:
         df = load_csv(MAIN_SHEET_ID, active_gids[reg])
         df.columns = [str(c).lower().strip() for c in df.columns]
-        s_col = next((c for c in df.columns if 'sku' in c), 'sku')
-        q_col = next((c for c in df.columns if 'qty' in c or 'quantity' in c), 'quantity')
-        d_col = next((c for c in df.columns if 'date' in c), 'date')
+        s_col = next((c for c in df.columns if 'sku' in c), 'sku'); q_col = next((c for c in df.columns if 'qty' in c or 'quantity' in c), 'quantity'); d_col = next((c for c in df.columns if 'date' in c), 'date')
         df = df.rename(columns={s_col: 'sku', q_col: 'quantity', d_col: 'date'})
-        
         df = df[df['sku'].apply(is_valid_sku)]
         df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce').dt.date
         df = df.dropna(subset=['date'])
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
         
         lt = df['date'].max()
-        s1, p1, p2 = lt - timedelta(6), lt - timedelta(13), lt - timedelta(7)
-        curr, prev = df[df['date'] >= s1], df[(df['date'] >= p1) & (df['date'] <= p2)]
+        s_curr, e_curr = lt - timedelta(6), lt
+        s_prev, e_prev = s_curr - timedelta(7), s_curr - timedelta(1)
         
-        st.markdown(f"### 📅 Weekly Snapshot: {s1} to {lt}")
+        st.info(f"📍 **{reg}** | Weekly Window: {s_curr} to {e_curr}")
+        
+        curr_week = df[(df['date'] >= s_curr) & (df['date'] <= e_curr)].groupby('sku')['quantity'].sum().reset_index()
+        prev_week = df[(df['date'] >= s_prev) & (df['date'] <= e_prev)].groupby('sku')['quantity'].sum().reset_index()
+        
+        recon = pd.merge(curr_week, prev_week, on='sku', how='outer', suffixes=('_C', '_P')).fillna(0)
+        recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
+        recon = recon[recon['quantity_C'] > 0]
+        
         m1, m2 = st.columns(2)
         with m1:
-            v, o = curr[curr['sku'].apply(is_cam)]['quantity'].sum(), prev[prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric("📸 Camera Units", f"{int(v):,}", delta=f"{int(v-o)}")
+            v = recon[recon['sku'].apply(is_cam)]['quantity_C'].sum()
+            o = recon[recon['sku'].apply(is_cam)]['quantity_P'].sum()
+            st.metric("📸 Camera Units", f"{int(v)}", delta=f"{int(v-o)}")
         with m2:
-            v, o = curr[~curr['sku'].apply(is_cam)]['quantity'].sum(), prev[~prev['sku'].apply(is_cam)]['quantity'].sum()
-            st.metric("🎒 Accessory Units", f"{int(v):,}", delta=f"{int(v-o)}")
-        
+            v = recon[~recon['sku'].apply(is_cam)]['quantity_C'].sum()
+            o = recon[~recon['sku'].apply(is_cam)]['quantity_P'].sum()
+            st.metric("🎒 Accessory Units", f"{int(v)}", delta=f"{int(v-o)}")
+
         st.divider()
-        st.subheader("🚀 Weekly Movers (Top 3 & Bottom 3)")
-        r_s, p_s = curr.groupby('sku')['quantity'].sum(), prev.groupby('sku')['quantity'].sum()
-        cp = pd.merge(r_s, p_s, on='sku', how='outer', suffixes=('_c', '_p')).fillna(0)
-        cp['Change'] = cp['quantity_c'] - cp['quantity_p']
-        cp = cp[cp['quantity_c'] > 0] 
-        
-        cam_mv, acc_mv = cp[cp.index.map(is_cam)], cp[~cp.index.map(is_cam)]
-        
+        st.subheader("🚀 Weekly SKU Movers (Top 3 & Bottom 3)")
+        cam_r, acc_r = recon[recon['sku'].apply(is_cam)], recon[~recon['sku'].apply(is_cam)]
         grid_a, grid_b = st.columns(2)
         with grid_a:
-            st.markdown("#### 📸 Camera Movers")
-            st.success("Top 3 Increase")
-            st.dataframe(cam_mv[cam_mv['Change']>0].nlargest(3, 'Change')[['Change']], use_container_width=True)
-            st.error("Bottom 3 Decrease")
-            st.dataframe(cam_mv[cam_mv['Change']<0].nsmallest(3, 'Change')[['Change']], use_container_width=True)
+            st.success("📸 Camera Top 3"); st.dataframe(cam_r[cam_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+            st.error("📸 Camera Bottom 3"); st.dataframe(cam_r[cam_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
         with grid_b:
-            st.markdown("#### 🎒 Accessory Movers")
-            st.success("Top 3 Increase")
-            st.dataframe(acc_mv[acc_mv['Change']>0].nlargest(3, 'Change')[['Change']], use_container_width=True)
-            st.error("Bottom 3 Decrease")
-            st.dataframe(acc_mv[acc_mv['Change']<0].nsmallest(3, 'Change')[['Change']], use_container_width=True)
-            
+            st.success("🎒 Accessory Top 3"); st.dataframe(acc_r[acc_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+            st.error("🎒 Accessory Bottom 3"); st.dataframe(acc_r[acc_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+
         st.divider()
-        st.subheader(f"🏆 YTD {lt.year} Top 5 Rankings")
-        ytd_df = df[pd.to_datetime(df['date']).dt.year == lt.year].groupby('sku')['quantity'].sum().reset_index()
-        ytd_df.columns = ['SKU', 'Units']
-        
+        st.subheader(f"🏆 YTD {lt.year} Top 5 SKU Rankings")
+        ytd = df[pd.to_datetime(df['date']).dt.year == lt.year].groupby('sku')['quantity'].sum().reset_index()
         y1, y2 = st.columns(2)
         with y1:
-            st.markdown("#### 🥇 Top 5 Cameras (YTD)")
-            top_c = ytd_df[ytd_df['SKU'].apply(is_cam)].nlargest(5, 'Units')
+            st.markdown("#### 🥇 Top 5 Cameras")
+            top_c = ytd[ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
             st.dataframe(top_c, hide_index=True, use_container_width=True)
-            st.write(f"**Total Units:** {int(top_c['Units'].sum()):,}")
+            st.write(f"**Total Units:** {int(top_c['quantity'].sum()):,}")
         with y2:
-            st.markdown("#### 🥇 Top 5 Accessories (YTD)")
-            top_a = ytd_df[~ytd_df['SKU'].apply(is_cam)].nlargest(5, 'Units')
+            st.markdown("#### 🥇 Top 5 Accessories")
+            top_a = ytd[~ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
             st.dataframe(top_a, hide_index=True, use_container_width=True)
-            st.write(f"**Total Units:** {int(top_a['Units'].sum()):,}")
+            st.write(f"**Total Units:** {int(top_a['quantity'].sum()):,}")
 
-    except Exception as e:
-        st.error(f"Error processing sales data: {e}")
+    except Exception as e: st.error(f"Error: {e}")
