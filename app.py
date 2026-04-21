@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import plotly.express as px  # <-- NEW: Premium charting library
 
 # 1. Setup & Styling
 st.set_page_config(layout="wide", page_title="Global Inventory & Risk")
@@ -294,120 +295,4 @@ elif page == "🚚 3PL Costs & Logistics":
     with t_sum:
         try:
             df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
-            df_sum.columns = range(df_sum.shape[1])
-            
-            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
-            df_sum = df_sum.dropna(subset=[0]) 
-            
-            cols = SUMMARY_COLS[reg_3pl]
-            f_col, s_col, st_col = cols["fulfill"], cols["shipping"], cols["storage"]
-            
-            # Clean currency formatting ($ and commas) before turning to numeric
-            for c in [f_col, s_col, st_col]:
-                if c < df_sum.shape[1]: 
-                    df_sum[c] = df_sum[c].astype(str).str.replace(r'[$, ]', '', regex=True)
-                    df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
-            
-            # Create a clean Month-Year string for Grouping and Charting (e.g. "2026-04")
-            df_sum['YM'] = df_sum[0].dt.to_period('M')
-            
-            # Find the most recent month that actually has costs > $0
-            valid_cols = [c for c in [f_col, s_col, st_col] if c < df_sum.shape[1]]
-            monthly_costs = df_sum.groupby('YM')[valid_cols].sum().sum(axis=1)
-            valid_months = monthly_costs[monthly_costs > 0]
-            
-            if valid_months.empty:
-                st.warning("⚠️ Could not find any costs greater than $0 for this region in the data.")
-            else:
-                most_recent_ym = valid_months.index.max()
-                curr_m, curr_y = most_recent_ym.month, most_recent_ym.year
-                
-                prev_m, prev_y = (12, curr_y - 1) if curr_m == 1 else (curr_m - 1, curr_y)
-                    
-                df_curr = df_sum[(df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)]
-                df_prev = df_sum[(df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)]
-                
-                display_date_str = datetime(curr_y, curr_m, 1).strftime('%B %Y')
-                st.subheader(f"💸 Monthly Cost Overview ({display_date_str})")
-                
-                curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
-                prev_fulfill = df_prev[f_col].sum() if f_col < df_prev.shape[1] else 0
-                
-                curr_shipping = df_curr[s_col].sum() if s_col < df_curr.shape[1] else 0
-                prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
-                
-                curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
-                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric(
-                    "Storage Cost", 
-                    f"${curr_storage:,.2f}", 
-                    delta=f"${curr_storage - prev_storage:,.2f}", 
-                    delta_color="inverse"
-                )
-                c2.metric(
-                    "Fulfillment Cost", 
-                    f"${curr_fulfill:,.2f}", 
-                    delta=f"${curr_fulfill - prev_fulfill:,.2f}", 
-                    delta_color="inverse"
-                )
-                c3.metric(
-                    "Total Shipping Cost", 
-                    f"${curr_shipping:,.2f}", 
-                    delta=f"${curr_shipping - prev_shipping:,.2f}", 
-                    delta_color="inverse"
-                )
-
-                # --- NEW TREND LINE CHART & TABLE ---
-                st.divider()
-                st.subheader("📈 Monthly Cost Trends")
-                
-                trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
-                trend_df = trend_df.rename(columns={
-                    0: 'Date',
-                    f_col: 'Fulfillment Cost',
-                    s_col: 'Shipping Cost',
-                    st_col: 'Storage Cost'
-                })
-                
-                # Group by Period
-                trend_df['MonthPeriod'] = trend_df['Date'].dt.to_period('M')
-                monthly_trend = trend_df.groupby('MonthPeriod')[['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']].sum()
-                
-                # Filter out months where ALL costs are $0
-                monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
-                
-                # Convert the Period Index back to a string so Streamlit draws a strict monthly chart (no daily ticks)
-                monthly_trend.index = monthly_trend.index.astype(str)
-                
-                # Draw Chart
-                st.line_chart(monthly_trend)
-                
-                # Draw Table
-                st.markdown("#### 📋 Monthly Breakdown")
-                
-                # Prepare data specifically for the clean table display
-                table_display = monthly_trend.copy()
-                table_display['Total Monthly Cost'] = table_display.sum(axis=1)
-                
-                # Reverse rows so the newest month sits at the very top of the table
-                table_display = table_display.iloc[::-1]
-                
-                # Format all numbers as currency
-                for col in table_display.columns:
-                    table_display[col] = table_display[col].map("${:,.2f}".format)
-                
-                table_display.index.name = "Month"
-                
-                st.dataframe(table_display, use_container_width=True)
-        
-        except Exception as e:
-            st.error(f"Error loading Summary data: {e}")
-
-    # ==========================================
-    # TAB 2: SHIPPING ANALYSIS (Placeholder for next step)
-    # ==========================================
-    if has_shipping_data:
-        with t_ship:
-            st.info("Shipping analysis will be built here next.")
+            df_sum.columns = range(df
