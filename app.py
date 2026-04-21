@@ -123,10 +123,252 @@ if page == "📦 Inventory & Risk":
             
             f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
             f_df.columns = [str(c).strip() for c in f_df.columns]
-            target_months = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
+            
+            target_months = []
+            for i in range(3):
+                date_val = (datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1)
+                target_months.append(date_val.strftime('%Y-%m-01'))
             
             inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
             df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
             risk_inv = df_inv_risk.iloc[:, [0, m_map[m_sel]]].copy()
             risk_inv.columns = ["SKU", "Stock"]
-            risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int
+            
+            # FORMATTED TO PREVENT CUTOFF:
+            risk_inv["Stock"] = pd.to_numeric(
+                risk_inv["Stock"], errors='coerce'
+            ).fillna(0).astype(int)
+
+            risk_list = []
+            for _, row in f_df.iterrows():
+                sku = str(row.iloc[0]).strip()
+                if not is_valid_sku(sku): 
+                    continue
+                
+                demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
+                
+                # Format safety lookup to prevent cutoff
+                match_safe = safety_df[safety_df.iloc[:,0].str.lower().str.strip() == sku.lower()]
+                safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce') if not match_safe.empty else 0
+                
+                match_live = risk_inv[risk_inv["SKU"].str.lower().str.strip() == sku.lower()]
+                live = match_live["Stock"].sum()
+                
+                match_inbound = po_sum[po_sum["SKU"].str.lower().str.strip() == sku.lower()]
+                inbound = match_inbound["Qty"].sum()
+                
+                balance = (live + inbound) - demand - safe_val
+                if balance < 0:
+                    risk_list.append({
+                        "SKU": sku.upper(), 
+                        "Stock": int(live), 
+                        "Inbound": int(inbound), 
+                        "3m Forecast": int(demand), 
+                        "Shortage": int(abs(balance))
+                    })
+            
+            if risk_list:
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
+                df_risk_display = pd.DataFrame(risk_list).sort_values(by="Shortage", ascending=False)
+                st.dataframe(df_risk_display, use_container_width=True, hide_index=True)
+            else: 
+                st.success("✅ Forecast demand met.")
+        except Exception as e: 
+            st.warning(f"Risk calculation error: {e}")
+
+    st.divider()
+    
+    df_inv = load_csv(MAIN_SHEET_ID, "856174189" if chan == "Amazon (FBA)" else "0")
+    s_df = df_inv.iloc[:, [0, m_map[m_sel]]].copy()
+    s_df.columns = ["SKU", "Stock"]
+    s_df = s_df[s_df["SKU"].apply(is_valid_sku)]
+    
+    # FORMATTED TO PREVENT CUTOFF:
+    s_df["Stock"] = pd.to_numeric(
+        s_df["Stock"], errors='coerce'
+    ).fillna(0).astype(int)
+    
+    col_a, col_b = st.columns(2)
+    with col_a: 
+        st.subheader("📸 Cameras")
+        st.dataframe(s_df[s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+    with col_b: 
+        st.subheader("🎒 Accessories")
+        st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
+
+# --- SALES PERFORMANCE ---
+elif page == "💰 Sales Performance":
+    st.title(f"💰 {chan} Sales Performance")
+    active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
+    reg = st.sidebar.selectbox("Region", list(active_gids.keys()))
+    try:
+        df = load_csv(MAIN_SHEET_ID, active_gids[reg])
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        
+        s_col = next((c for c in df.columns if 'sku' in c), 'sku')
+        q_col = next((c for c in df.columns if 'qty' in c or 'quantity' in c), 'quantity')
+        d_col = next((c for c in df.columns if 'date' in c), 'date')
+        
+        df = df.rename(columns={s_col: 'sku', q_col: 'quantity', d_col: 'date'})
+        df = df[df['sku'].apply(is_valid_sku)]
+        df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce').dt.date
+        df = df.dropna(subset=['date'])
+        
+        # FORMATTED TO PREVENT CUTOFF:
+        df['quantity'] = pd.to_numeric(
+            df['quantity'], errors='coerce'
+        ).fillna(0)
+        
+        lt = df['date'].max()
+        s_curr, e_curr = lt - timedelta(6), lt
+        s_prev, e_prev = s_curr - timedelta(7), s_curr - timedelta(1)
+        
+        st.info(f"📍 **{reg}** | Weekly Window: {s_curr} to {e_curr}")
+        
+        curr_week = df[(df['date'] >= s_curr) & (df['date'] <= e_curr)].groupby('sku')['quantity'].sum().reset_index()
+        prev_week = df[(df['date'] >= s_prev) & (df['date'] <= e_prev)].groupby('sku')['quantity'].sum().reset_index()
+        
+        recon = pd.merge(curr_week, prev_week, on='sku', how='outer', suffixes=('_C', '_P')).fillna(0)
+        recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
+        recon = recon[recon['quantity_C'] > 0]
+        
+        m1, m2 = st.columns(2)
+        with m1:
+            v = recon[recon['sku'].apply(is_cam)]['quantity_C'].sum()
+            o = recon[recon['sku'].apply(is_cam)]['quantity_P'].sum()
+            st.metric("📸 Camera Units", f"{int(v)}", delta=f"{int(v-o)}")
+        with m2:
+            v = recon[~recon['sku'].apply(is_cam)]['quantity_C'].sum()
+            o = recon[~recon['sku'].apply(is_cam)]['quantity_P'].sum()
+            st.metric("🎒 Accessory Units", f"{int(v)}", delta=f"{int(v-o)}")
+
+        st.divider()
+        st.subheader("🚀 Weekly SKU Movers (Top 3 & Bottom 3)")
+        cam_r = recon[recon['sku'].apply(is_cam)]
+        acc_r = recon[~recon['sku'].apply(is_cam)]
+        
+        grid_a, grid_b = st.columns(2)
+        with grid_a:
+            st.success("📸 Camera Top 3")
+            st.dataframe(cam_r[cam_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+            st.error("📸 Camera Bottom 3")
+            st.dataframe(cam_r[cam_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+        with grid_b:
+            st.success("🎒 Accessory Top 3")
+            st.dataframe(acc_r[acc_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+            st.error("🎒 Accessory Bottom 3")
+            st.dataframe(acc_r[acc_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']], hide_index=True, use_container_width=True)
+
+        st.divider()
+        st.subheader(f"🏆 YTD {lt.year} Top 5 SKU Rankings")
+        ytd = df[pd.to_datetime(df['date']).dt.year == lt.year].groupby('sku')['quantity'].sum().reset_index()
+        y1, y2 = st.columns(2)
+        with y1:
+            st.markdown("#### 🥇 Top 5 Cameras")
+            top_c = ytd[ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_c, hide_index=True, use_container_width=True)
+            st.write(f"**Total Units:** {int(top_c['quantity'].sum()):,}")
+        with y2:
+            st.markdown("#### 🥇 Top 5 Accessories")
+            top_a = ytd[~ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_a, hide_index=True, use_container_width=True)
+            st.write(f"**Total Units:** {int(top_a['quantity'].sum()):,}")
+
+    except Exception as e: 
+        st.error(f"Error: {e}")
+
+# --- NEW ADDITION: 3PL COSTS & LOGISTICS ---
+elif page == "🚚 3PL Costs & Logistics":
+    st.title("🚚 3PL Costs & Logistics Analytics")
+    
+    # Sidebar selection based on our column mapping keys
+    reg_3pl = st.sidebar.selectbox("Select Region for 3PL Data", list(SUMMARY_COLS.keys()))
+    has_shipping_data = reg_3pl in GIDS_3PL_SHIPPING
+    
+    # Build tabs
+    if has_shipping_data:
+        t_sum, t_ship = st.tabs(["📊 Cost Summary", "🗺️ Shipping Analysis"])
+    else:
+        t_sum = st.container()
+        st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
+
+    # ==========================================
+    # TAB 1: SUMMARY COSTS 
+    # ==========================================
+    with t_sum:
+        try:
+            df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
+            df_sum.columns = range(df_sum.shape[1])
+            
+            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
+            df_sum = df_sum.dropna(subset=[0]) 
+            
+            cols = SUMMARY_COLS[reg_3pl]
+            f_col, s_col, st_col = cols["fulfill"], cols["shipping"], cols["storage"]
+            
+            # Clean currency formatting ($ and commas) before turning to numeric
+            for c in [f_col, s_col, st_col]:
+                if c < df_sum.shape[1]: 
+                    df_sum[c] = df_sum[c].astype(str).str.replace(r'[$, ]', '', regex=True)
+                    df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
+            
+            # Create a Month-Year period column to group by
+            df_sum['YM'] = df_sum[0].dt.to_period('M')
+            
+            # Find the most recent month that actually has costs > $0
+            valid_cols = [c for c in [f_col, s_col, st_col] if c < df_sum.shape[1]]
+            monthly_costs = df_sum.groupby('YM')[valid_cols].sum().sum(axis=1)
+            valid_months = monthly_costs[monthly_costs > 0]
+            
+            if valid_months.empty:
+                st.warning("⚠️ Could not find any costs greater than $0 for this region in the data.")
+            else:
+                most_recent_ym = valid_months.index.max()
+                curr_m, curr_y = most_recent_ym.month, most_recent_ym.year
+                
+                prev_m, prev_y = (12, curr_y - 1) if curr_m == 1 else (curr_m - 1, curr_y)
+                    
+                df_curr = df_sum[(df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)]
+                df_prev = df_sum[(df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)]
+                
+                display_date_str = datetime(curr_y, curr_m, 1).strftime('%B %Y')
+                st.subheader(f"💸 Monthly Cost Overview ({display_date_str})")
+                
+                curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
+                prev_fulfill = df_prev[f_col].sum() if f_col < df_prev.shape[1] else 0
+                
+                curr_shipping = df_curr[s_col].sum() if s_col < df_curr.shape[1] else 0
+                prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
+                
+                curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
+                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric(
+                    "Storage Cost", 
+                    f"${curr_storage:,.2f}", 
+                    delta=f"${curr_storage - prev_storage:,.2f}", 
+                    delta_color="inverse"
+                )
+                c2.metric(
+                    "Fulfillment Cost", 
+                    f"${curr_fulfill:,.2f}", 
+                    delta=f"${curr_fulfill - prev_fulfill:,.2f}", 
+                    delta_color="inverse"
+                )
+                c3.metric(
+                    "Total Shipping Cost", 
+                    f"${curr_shipping:,.2f}", 
+                    delta=f"${curr_shipping - prev_shipping:,.2f}", 
+                    delta_color="inverse"
+                )
+        
+        except Exception as e:
+            st.error(f"Error loading Summary data: {e}")
+
+    # ==========================================
+    # TAB 2: SHIPPING ANALYSIS (Placeholder for next step)
+    # ==========================================
+    if has_shipping_data:
+        with t_ship:
+            st.info("Shipping analysis will be built here next.")
