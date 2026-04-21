@@ -431,7 +431,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 )
 
                 st.divider()
-                st.subheader("📈 Monthly Cost Trends")
+                st.subheader("📋 Monthly Cost Breakdown")
                 
                 trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
                 trend_df = trend_df.rename(columns={
@@ -447,12 +447,6 @@ elif page == "🚚 3PL Costs & Logistics":
                 monthly_trend = trend_df.groupby('MonthPeriod')[group_cols].sum()
                 
                 monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
-                
-                # Use Streamlit's native chart to completely avoid external library dependencies
-                monthly_trend.index = monthly_trend.index.astype(str)
-                st.line_chart(monthly_trend)
-                
-                st.markdown("#### 📋 Monthly Breakdown")
                 
                 table_display = monthly_trend.copy()
                 table_display.index = table_display.index.astype(str) 
