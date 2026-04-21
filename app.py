@@ -27,6 +27,25 @@ GIDS_FOR_MONTHS = {
 GID_SAFETY_SOURCE = "2100066410"
 GID_PO_GRID = "1801670245" 
 
+# --- NEW 3PL DATA GIDS & MAPPINGS ---
+THREE_PL_SHEET_ID = "1UzHDyqkj1fvGYOXk8e_iOSWYsIofHB7id0hjEaX7Rm4"
+GID_3PL_SUMMARY = "972554877" 
+
+# Column mappings (0-indexed: A=0, B=1, C=2...)
+# US: B(1), C(2), D(3) | CA: E(4), F(5), G(6) | EU: K(10), L(11), M(12) | UK: N(13), O(14), P(15)
+SUMMARY_COLS = {
+    "🇺🇸 US": {"fulfill": 1, "shipping": 2, "storage": 3},
+    "🇨🇦 CA": {"fulfill": 4, "shipping": 5, "storage": 6},
+    "🇪🇺 EU": {"fulfill": 10, "shipping": 11, "storage": 12},
+    "🇬🇧 UK": {"fulfill": 13, "shipping": 14, "storage": 15}
+}
+
+GIDS_3PL_SHIPPING = {
+    "🇺🇸 US": "1369957058", 
+    "🇨🇦 CA": "332821648", 
+    "🇪🇺 EU": "1032280204"
+}
+
 # --- REGION RANGES FOR SAFETY STOCK ---
 REGION_RANGES = {
     "Shopify/WH": {"🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)},
@@ -53,7 +72,6 @@ def is_cam(s):
     s = str(s).upper().strip()
     if s in MP2_CAMS: return True
     if "PAPER" in s: return False
-    # If it's another MP2 (like mp2-pp), it's an accessory
     if s.startswith("MP2-") and s not in MP2_CAMS: return False
     return any(s.startswith(x) for x in CAMS_PREFIX)
 
@@ -75,7 +93,13 @@ def get_filtered_po_data(channel, region_label):
 
 # --- SIDEBAR ---
 chan = st.sidebar.selectbox("Sales Channel", ["Shopify/WH", "Amazon (FBA)"])
-page = st.sidebar.radio("Dashboard View", ["📦 Inventory & Risk", "💰 Sales Performance"])
+
+# Dynamically change menu options based on Shopify selection
+menu_options = ["📦 Inventory & Risk", "💰 Sales Performance"]
+if chan == "Shopify/WH":
+    menu_options.append("🚚 3PL Costs & Logistics")
+
+page = st.sidebar.radio("Dashboard View", menu_options)
 
 # --- INVENTORY & RISK ---
 if page == "📦 Inventory & Risk":
@@ -206,3 +230,82 @@ elif page == "💰 Sales Performance":
             st.write(f"**Total Units:** {int(top_a['quantity'].sum()):,}")
 
     except Exception as e: st.error(f"Error: {e}")
+
+# --- NEW ADDITION: 3PL COSTS & LOGISTICS ---
+elif page == "🚚 3PL Costs & Logistics":
+    st.title("🚚 3PL Costs & Logistics Analytics")
+    
+    # Sidebar selection based on our column mapping keys
+    reg_3pl = st.sidebar.selectbox("Select Region for 3PL Data", list(SUMMARY_COLS.keys()))
+    has_shipping_data = reg_3pl in GIDS_3PL_SHIPPING
+    
+    # Build tabs
+    if has_shipping_data:
+        t_sum, t_ship = st.tabs(["📊 Cost Summary", "🗺️ Shipping Analysis"])
+    else:
+        t_sum = st.container()
+        st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
+
+    # ==========================================
+    # TAB 1: SUMMARY COSTS (Using strict column mapping)
+    # ==========================================
+    with t_sum:
+        try:
+            # Load the master summary sheet
+            df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
+            
+            # Reset columns to integers (0, 1, 2, 3...) so we can map them accurately
+            df_sum.columns = range(df_sum.shape[1])
+            
+            # Column 0 is always Date (Column A)
+            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
+            df_sum = df_sum.dropna(subset=[0]) # Drop rows without a valid date
+            
+            # Grab the specific columns for the selected region
+            cols = SUMMARY_COLS[reg_3pl]
+            f_col, s_col, st_col = cols["fulfill"], cols["shipping"], cols["storage"]
+            
+            # Convert those specific columns to numbers
+            for c in [f_col, s_col, st_col]:
+                if c < df_sum.shape[1]: # Safety check so it doesn't crash if the sheet is missing columns
+                    df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
+                    
+            # Find the most recent month dynamically
+            max_date = df_sum[0].max()
+            if pd.isna(max_date):
+                st.warning("No valid dates found in summary data.")
+            else:
+                curr_m, curr_y = max_date.month, max_date.year
+                prev_m, prev_y = (12, curr_y - 1) if curr_m == 1 else (curr_m - 1, curr_y)
+                    
+                # Isolate Current and Previous Month data
+                df_curr = df_sum[(df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)]
+                df_prev = df_sum[(df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)]
+                
+                st.subheader(f"💸 Monthly Cost Overview ({max_date.strftime('%B %Y')})")
+                
+                # Sum the specific columns
+                curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
+                prev_fulfill = df_prev[f_col].sum() if f_col < df_prev.shape[1] else 0
+                
+                curr_shipping = df_curr[s_col].sum() if s_col < df_curr.shape[1] else 0
+                prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
+                
+                curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
+                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
+                
+                # Display Metrics (Inverse colors: red for cost increase, green for decrease)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Storage Cost", f"${curr_storage:,.2f}", delta=f"${curr_storage - prev_storage:,.2f}", delta_color="inverse")
+                c2.metric("Fulfillment Cost", f"${curr_fulfill:,.2f}", delta=f"${curr_fulfill - prev_fulfill:,.2f}", delta_color="inverse")
+                c3.metric("Total Shipping Cost", f"${curr_shipping:,.2f}", delta=f"${curr_shipping - prev_shipping:,.2f}", delta_color="inverse")
+        
+        except Exception as e:
+            st.error(f"Error loading Summary data: {e}")
+
+    # ==========================================
+    # TAB 2: SHIPPING ANALYSIS (Placeholder for next step)
+    # ==========================================
+    if has_shipping_data:
+        with t_ship:
+            st.info("Shipping analysis will be built here next.")
