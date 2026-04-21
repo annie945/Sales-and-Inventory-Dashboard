@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-import plotly.express as px
 
 # 1. Setup & Styling
 st.set_page_config(layout="wide", page_title="Global Inventory & Risk")
@@ -449,47 +448,9 @@ elif page == "🚚 3PL Costs & Logistics":
                 
                 monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
                 
-                plot_data = monthly_trend.copy()
-                plot_data.index = plot_data.index.to_timestamp() 
-                plot_data = plot_data.reset_index()
-                
-                plot_data = plot_data.melt(
-                    id_vars='MonthPeriod', 
-                    var_name='Category', 
-                    value_name='Cost ($)'
-                )
-                plot_data.rename(columns={'MonthPeriod': 'Date'}, inplace=True)
-                
-                fig = px.line(
-                    plot_data, 
-                    x='Date', 
-                    y='Cost ($)', 
-                    color='Category',
-                    markers=True,
-                    color_discrete_map={
-                        'Shipping Cost': '#3498db',    
-                        'Fulfillment Cost': '#2ecc71', 
-                        'Storage Cost': '#e74c3c'      
-                    }
-                )
-                
-                fig.update_layout(
-                    xaxis_title="",
-                    yaxis_title="Amount ($)",
-                    legend_title="",
-                    legend=dict(
-                        orientation="v", 
-                        yanchor="top", 
-                        y=1, 
-                        xanchor="left", 
-                        x=1.02
-                    ),
-                    xaxis=dict(tickformat="%b %Y", tickangle=0),
-                    hovermode="x unified",
-                    margin=dict(l=0, r=0, t=30, b=0)
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
+                # Use Streamlit's native chart to completely avoid external library dependencies
+                monthly_trend.index = monthly_trend.index.astype(str)
+                st.line_chart(monthly_trend)
                 
                 st.markdown("#### 📋 Monthly Breakdown")
                 
