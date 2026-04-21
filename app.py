@@ -65,32 +65,47 @@ def load_csv(sheet_id, gid):
 def is_valid_sku(s):
     s = str(s).upper().strip()
     noise = ["WORRY FREE", "DELIVERY", "PROTECTION", "NAN", "TOTAL", "HEALTH", "RISK", "ATTENTION", "SKU"]
-    if any(x in s for x in noise) or s == "": return False
+    if any(x in s for x in noise) or s == "": 
+        return False
     return any(x in s for x in CAMS_PREFIX + ACCS_KEYWORDS)
 
 def is_cam(s):
     s = str(s).upper().strip()
-    if s in MP2_CAMS: return True
-    if "PAPER" in s: return False
-    if s.startswith("MP2-") and s not in MP2_CAMS: return False
+    if s in MP2_CAMS: 
+        return True
+    if "PAPER" in s: 
+        return False
+    if s.startswith("MP2-") and s not in MP2_CAMS: 
+        return False
     return any(s.startswith(x) for x in CAMS_PREFIX)
 
 def get_filtered_po_data(channel, region_label):
     try:
         df_po = load_csv(PO_MASTER_SHEET_ID, GID_PO_GRID)
         df_po.columns = range(df_po.shape[1])
-        df_po = df_po[df_po[11].astype(str).str.upper() != "RECEIVED"]
+        
+        not_received = df_po[11].astype(str).str.upper() != "RECEIVED"
+        df_po = df_po[not_received]
+        
         region_map = {"🇺🇸 US": ["US"], "🇨🇦 CA": ["CA"], "🇬🇧 UK": ["UK"], "🇦🇺 AU": ["AU"], "🇪🇺 EU": ["EU", "GERMANY"]}
         keywords = region_map.get(region_label, [])
         
+        is_amz = df_po[4].astype(str).str.contains("AMZ", case=False, na=False)
+        
         if channel == "Amazon (FBA)":
-            df_po = df_po[df_po[4].astype(str).str.contains("AMZ", case=False, na=False)]
+            df_po = df_po[is_amz]
         else:
-            df_po = df_po[~df_po[4].astype(str).str.contains("AMZ", case=False, na=False)]
+            df_po = df_po[~is_amz]
             
         pattern = '|'.join(keywords)
-        df_po = df_po[df_po[4].astype(str).str.contains(pattern, case=False, na=False)]
-        return df_po[[0, 5, 6, 9, 10]].rename(columns={0:'PO', 5:'SKU', 6:'Qty', 9:'ETA', 10:'Tracking'})
+        has_region = df_po[4].astype(str).str.contains(pattern, case=False, na=False)
+        df_po = df_po[has_region]
+        
+        cols_to_keep = [0, 5, 6, 9, 10]
+        df_po = df_po[cols_to_keep]
+        
+        rename_dict = {0:'PO', 5:'SKU', 6:'Qty', 9:'ETA', 10:'Tracking'}
+        return df_po.rename(columns=rename_dict)
     except Exception as e: 
         return pd.DataFrame()
 
@@ -106,7 +121,12 @@ page = st.sidebar.radio("Dashboard View", menu_options)
 # --- INVENTORY & RISK ---
 if page == "📦 Inventory & Risk":
     st.title(f"📦 {chan} Inventory & Risk")
-    m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
+    
+    if chan == "Amazon (FBA)":
+        m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18}
+    else:
+        m_map = {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
+        
     m_sel = st.radio("Market", list(m_map.keys()), horizontal=True)
     
     df_po = get_filtered_po_data(chan, m_sel)
@@ -129,9 +149,132 @@ if page == "📦 Inventory & Risk":
             
             target_months = []
             for i in range(3):
-                date_val = (datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1)
+                date_val = (datetime.now().replace(day=1) + timedelta(days=31*i))
+                date_val = date_val.replace(day=1)
                 target_months.append(date_val.strftime('%Y-%m-01'))
             
             inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
             df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
-            risk_inv = df_inv_risk.iloc[:,
+            
+            # SPLIT ILOC TO PREVENT GITHUB TRUNCATION
+            inv_col_idx = m_map[m_sel]
+            risk_inv = df_inv_risk.iloc[:, [0, inv_col_idx]].copy()
+            risk_inv.columns = ["SKU", "Stock"]
+            
+            risk_inv["Stock"] = pd.to_numeric(
+                risk_inv["Stock"], errors='coerce'
+            ).fillna(0).astype(int)
+
+            risk_list = []
+            for _, row in f_df.iterrows():
+                sku = str(row.iloc[0]).strip()
+                if not is_valid_sku(sku): 
+                    continue
+                
+                demand = 0
+                for m in target_months:
+                    if m in f_df.columns:
+                        val = pd.to_numeric(row[m], errors='coerce')
+                        if pd.notna(val):
+                            demand += val
+                
+                safe_skus = safety_df.iloc[:,0].astype(str).str.lower().str.strip()
+                match_safe = safety_df[safe_skus == sku.lower()]
+                safe_val = 0
+                if not match_safe.empty:
+                    safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce')
+                    if pd.isna(safe_val): safe_val = 0
+                
+                live_skus = risk_inv["SKU"].astype(str).str.lower().str.strip()
+                match_live = risk_inv[live_skus == sku.lower()]
+                live = match_live["Stock"].sum()
+                
+                inbound_skus = po_sum["SKU"].astype(str).str.lower().str.strip()
+                match_inbound = po_sum[inbound_skus == sku.lower()]
+                inbound = match_inbound["Qty"].sum()
+                
+                balance = (live + inbound) - demand - safe_val
+                if balance < 0:
+                    risk_list.append({
+                        "SKU": sku.upper(), 
+                        "Stock": int(live), 
+                        "Inbound": int(inbound), 
+                        "3m Forecast": int(demand), 
+                        "Shortage": int(abs(balance))
+                    })
+            
+            if risk_list:
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
+                df_risk_display = pd.DataFrame(risk_list)
+                df_risk_display = df_risk_display.sort_values(by="Shortage", ascending=False)
+                st.dataframe(df_risk_display, use_container_width=True, hide_index=True)
+            else: 
+                st.success("✅ Forecast demand met.")
+        except Exception as e: 
+            st.warning(f"Risk calculation error: {e}")
+
+    st.divider()
+    
+    inv_gid_2 = "856174189" if chan == "Amazon (FBA)" else "0"
+    df_inv = load_csv(MAIN_SHEET_ID, inv_gid_2)
+    
+    # SPLIT ILOC TO PREVENT GITHUB TRUNCATION
+    inv_col_index = m_map[m_sel]
+    s_df = df_inv.iloc[:, [0, inv_col_index]].copy()
+    s_df.columns = ["SKU", "Stock"]
+    
+    s_df = s_df[s_df["SKU"].apply(is_valid_sku)]
+    
+    s_df["Stock"] = pd.to_numeric(
+        s_df["Stock"], errors='coerce'
+    ).fillna(0).astype(int)
+    
+    col_a, col_b = st.columns(2)
+    with col_a: 
+        st.subheader("📸 Cameras")
+        cam_df = s_df[s_df["SKU"].apply(is_cam)]
+        st.dataframe(cam_df, hide_index=True, use_container_width=True)
+    with col_b: 
+        st.subheader("🎒 Accessories")
+        acc_df = s_df[~s_df["SKU"].apply(is_cam)]
+        st.dataframe(acc_df, hide_index=True, use_container_width=True)
+
+# --- SALES PERFORMANCE ---
+elif page == "💰 Sales Performance":
+    st.title(f"💰 {chan} Sales Performance")
+    active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
+    reg = st.sidebar.selectbox("Region", list(active_gids.keys()))
+    try:
+        df = load_csv(MAIN_SHEET_ID, active_gids[reg])
+        df.columns = [str(c).lower().strip() for c in df.columns]
+        
+        s_col = next((c for c in df.columns if 'sku' in c), 'sku')
+        q_col = next((c for c in df.columns if 'qty' in c or 'quantity' in c), 'quantity')
+        d_col = next((c for c in df.columns if 'date' in c), 'date')
+        
+        df = df.rename(columns={s_col: 'sku', q_col: 'quantity', d_col: 'date'})
+        df = df[df['sku'].apply(is_valid_sku)]
+        df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce').dt.date
+        df = df.dropna(subset=['date'])
+        
+        df['quantity'] = pd.to_numeric(
+            df['quantity'], errors='coerce'
+        ).fillna(0)
+        
+        lt = df['date'].max()
+        s_curr = lt - timedelta(6)
+        e_curr = lt
+        s_prev = s_curr - timedelta(7)
+        e_prev = s_curr - timedelta(1)
+        
+        st.info(f"📍 **{reg}** | Weekly Window: {s_curr} to {e_curr}")
+        
+        mask_curr = (df['date'] >= s_curr) & (df['date'] <= e_curr)
+        curr_week = df[mask_curr].groupby('sku')['quantity'].sum().reset_index()
+        
+        mask_prev = (df['date'] >= s_prev) & (df['date'] <= e_prev)
+        prev_week = df[mask_prev].groupby('sku')['quantity'].sum().reset_index()
+        
+        recon = pd.merge(curr_week, prev_week, on='sku', how='outer', suffixes=('_C', '_P'))
+        recon = recon.fillna(0)
+        recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
