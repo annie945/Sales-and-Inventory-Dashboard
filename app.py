@@ -84,4 +84,49 @@ def get_filtered_po_data(channel, region_label):
         if channel == "Amazon (FBA)":
             df_po = df_po[df_po[4].astype(str).str.contains("AMZ", case=False, na=False)]
         else:
-            df_po = df_
+            df_po = df_po[~df_po[4].astype(str).str.contains("AMZ", case=False, na=False)]
+        pattern = '|'.join(keywords)
+        df_po = df_po[df_po[4].astype(str).str.contains(pattern, case=False, na=False)]
+        return df_po[[0, 5, 6, 9, 10]].rename(columns={0:'PO', 5:'SKU', 6:'Qty', 9:'ETA', 10:'Tracking'})
+    except Exception as e: 
+        return pd.DataFrame()
+
+# --- SIDEBAR ---
+chan = st.sidebar.selectbox("Sales Channel", ["Shopify/WH", "Amazon (FBA)"])
+
+menu_options = ["📦 Inventory & Risk", "💰 Sales Performance"]
+if chan == "Shopify/WH":
+    menu_options.append("🚚 3PL Costs & Logistics")
+
+page = st.sidebar.radio("Dashboard View", menu_options)
+
+# --- INVENTORY & RISK ---
+if page == "📦 Inventory & Risk":
+    st.title(f"📦 {chan} Inventory & Risk")
+    m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
+    m_sel = st.radio("Market", list(m_map.keys()), horizontal=True)
+    
+    df_po = get_filtered_po_data(chan, m_sel)
+    po_sum = pd.DataFrame(columns=['SKU', 'Qty'])
+    if not df_po.empty:
+        st.subheader("🚚 Inbound Pipeline")
+        st.dataframe(df_po, use_container_width=True, hide_index=True)
+        po_sum = df_po.groupby('SKU')['Qty'].sum().reset_index()
+
+    if m_sel in GIDS_FOR_MONTHS[chan]:
+        st.subheader(f"🚨 3-Month Out-of-Stock Risk ({m_sel})")
+        try:
+            safety_full = load_csv(FORECAST_SHEET_ID, GID_SAFETY_SOURCE)
+            r_start, r_end = REGION_RANGES[chan][m_sel]
+            safety_df = safety_full.iloc[r_start:r_end].copy()
+            safety_df.columns = [str(c).strip() for c in safety_df.columns]
+            
+            f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
+            f_df.columns = [str(c).strip() for c in f_df.columns]
+            target_months = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1).strftime('%Y-%m-01') for i in range(3)]
+            
+            inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
+            df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
+            risk_inv = df_inv_risk.iloc[:, [0, m_map[m_sel]]].copy()
+            risk_inv.columns = ["SKU", "Stock"]
+            risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int
