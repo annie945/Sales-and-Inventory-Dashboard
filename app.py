@@ -147,7 +147,6 @@ if page == "📦 Inventory & Risk":
                 
                 demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
                 
-                # Format safety lookup to prevent cutoff
                 match_safe = safety_df[safety_df.iloc[:,0].str.lower().str.strip() == sku.lower()]
                 safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce') if not match_safe.empty else 0
                 
@@ -293,7 +292,7 @@ elif page == "🚚 3PL Costs & Logistics":
         st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
 
     # ==========================================
-    # TAB 1: SUMMARY COSTS 
+    # TAB 1: SUMMARY COSTS & TREND CHART
     # ==========================================
     with t_sum:
         try:
@@ -362,6 +361,29 @@ elif page == "🚚 3PL Costs & Logistics":
                     delta=f"${curr_shipping - prev_shipping:,.2f}", 
                     delta_color="inverse"
                 )
+
+                # --- NEW TREND LINE CHART ---
+                st.divider()
+                st.subheader("📈 Cost Trends Over Time")
+                
+                # Prepare a DataFrame specifically for the line chart
+                trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
+                trend_df = trend_df.rename(columns={
+                    0: 'Date',
+                    f_col: 'Fulfillment Cost',
+                    s_col: 'Shipping Cost',
+                    st_col: 'Storage Cost'
+                })
+                
+                # Group by Month/Year to smooth the lines
+                trend_df['Month'] = trend_df['Date'].dt.to_period('M').dt.to_timestamp()
+                monthly_trend = trend_df.groupby('Month')[['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']].sum()
+                
+                # Filter out months where ALL costs were $0 to keep the chart clean
+                monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
+                
+                # Display the chart
+                st.line_chart(monthly_trend)
         
         except Exception as e:
             st.error(f"Error loading Summary data: {e}")
