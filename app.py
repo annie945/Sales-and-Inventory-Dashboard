@@ -247,7 +247,7 @@ elif page == "🚚 3PL Costs & Logistics":
         st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
 
     # ==========================================
-    # TAB 1: SUMMARY COSTS (Using strict column mapping)
+    # TAB 1: SUMMARY COSTS (Smart Date Search)
     # ==========================================
     with t_sum:
         try:
@@ -267,22 +267,41 @@ elif page == "🚚 3PL Costs & Logistics":
             
             # Convert those specific columns to numbers
             for c in [f_col, s_col, st_col]:
-                if c < df_sum.shape[1]: # Safety check so it doesn't crash if the sheet is missing columns
+                if c < df_sum.shape[1]: 
                     df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
                     
-            # Find the most recent month dynamically
-            max_date = df_sum[0].max()
-            if pd.isna(max_date):
-                st.warning("No valid dates found in summary data.")
+            # SMART DATE SEARCH: Start from today and walk backwards until we find data > $0
+            today = datetime.now()
+            target_date = today
+            found_data = False
+            
+            for _ in range(12): # Look back up to 12 months max
+                tm, ty = target_date.month, target_date.year
+                df_test = df_sum[(df_sum[0].dt.month == tm) & (df_sum[0].dt.year == ty)]
+                
+                sum_costs = 0
+                for c in [f_col, s_col, st_col]:
+                    if c < df_test.shape[1]:
+                        sum_costs += df_test[c].sum()
+                        
+                if sum_costs > 0:
+                    found_data = True
+                    break # We found the most recent actual month!
+                    
+                target_date = target_date.replace(day=1) - timedelta(days=1)
+            
+            if not found_data:
+                st.warning("⚠️ Could not find any costs greater than $0 for this region in the past year.")
             else:
-                curr_m, curr_y = max_date.month, max_date.year
-                prev_m, prev_y = (12, curr_y - 1) if curr_m == 1 else (curr_m - 1, curr_y)
+                curr_m, curr_y = target_date.month, target_date.year
+                prev_date = target_date.replace(day=1) - timedelta(days=1)
+                prev_m, prev_y = prev_date.month, prev_date.year
                     
                 # Isolate Current and Previous Month data
                 df_curr = df_sum[(df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)]
                 df_prev = df_sum[(df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)]
                 
-                st.subheader(f"💸 Monthly Cost Overview ({max_date.strftime('%B %Y')})")
+                st.subheader(f"💸 Monthly Cost Overview ({target_date.strftime('%B %Y')})")
                 
                 # Sum the specific columns
                 curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
