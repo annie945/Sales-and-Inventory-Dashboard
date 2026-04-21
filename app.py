@@ -134,7 +134,6 @@ if page == "📦 Inventory & Risk":
             risk_inv = df_inv_risk.iloc[:, [0, m_map[m_sel]]].copy()
             risk_inv.columns = ["SKU", "Stock"]
             
-            # FORMATTED TO PREVENT CUTOFF:
             risk_inv["Stock"] = pd.to_numeric(
                 risk_inv["Stock"], errors='coerce'
             ).fillna(0).astype(int)
@@ -182,7 +181,6 @@ if page == "📦 Inventory & Risk":
     s_df.columns = ["SKU", "Stock"]
     s_df = s_df[s_df["SKU"].apply(is_valid_sku)]
     
-    # FORMATTED TO PREVENT CUTOFF:
     s_df["Stock"] = pd.to_numeric(
         s_df["Stock"], errors='coerce'
     ).fillna(0).astype(int)
@@ -213,7 +211,6 @@ elif page == "💰 Sales Performance":
         df['date'] = pd.to_datetime(df['date'], format='mixed', errors='coerce').dt.date
         df = df.dropna(subset=['date'])
         
-        # FORMATTED TO PREVENT CUTOFF:
         df['quantity'] = pd.to_numeric(
             df['quantity'], errors='coerce'
         ).fillna(0)
@@ -292,7 +289,7 @@ elif page == "🚚 3PL Costs & Logistics":
         st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
 
     # ==========================================
-    # TAB 1: SUMMARY COSTS & TREND CHART
+    # TAB 1: SUMMARY COSTS 
     # ==========================================
     with t_sum:
         try:
@@ -311,7 +308,7 @@ elif page == "🚚 3PL Costs & Logistics":
                     df_sum[c] = df_sum[c].astype(str).str.replace(r'[$, ]', '', regex=True)
                     df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
             
-            # Create a Month-Year period column to group by
+            # Create a clean Month-Year string for Grouping and Charting (e.g. "2026-04")
             df_sum['YM'] = df_sum[0].dt.to_period('M')
             
             # Find the most recent month that actually has costs > $0
@@ -362,11 +359,10 @@ elif page == "🚚 3PL Costs & Logistics":
                     delta_color="inverse"
                 )
 
-                # --- NEW TREND LINE CHART ---
+                # --- NEW TREND LINE CHART & TABLE ---
                 st.divider()
-                st.subheader("📈 Cost Trends Over Time")
+                st.subheader("📈 Monthly Cost Trends")
                 
-                # Prepare a DataFrame specifically for the line chart
                 trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
                 trend_df = trend_df.rename(columns={
                     0: 'Date',
@@ -375,15 +371,36 @@ elif page == "🚚 3PL Costs & Logistics":
                     st_col: 'Storage Cost'
                 })
                 
-                # Group by Month/Year to smooth the lines
-                trend_df['Month'] = trend_df['Date'].dt.to_period('M').dt.to_timestamp()
-                monthly_trend = trend_df.groupby('Month')[['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']].sum()
+                # Group by Period
+                trend_df['MonthPeriod'] = trend_df['Date'].dt.to_period('M')
+                monthly_trend = trend_df.groupby('MonthPeriod')[['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']].sum()
                 
-                # Filter out months where ALL costs were $0 to keep the chart clean
+                # Filter out months where ALL costs are $0
                 monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
                 
-                # Display the chart
+                # Convert the Period Index back to a string so Streamlit draws a strict monthly chart (no daily ticks)
+                monthly_trend.index = monthly_trend.index.astype(str)
+                
+                # Draw Chart
                 st.line_chart(monthly_trend)
+                
+                # Draw Table
+                st.markdown("#### 📋 Monthly Breakdown")
+                
+                # Prepare data specifically for the clean table display
+                table_display = monthly_trend.copy()
+                table_display['Total Monthly Cost'] = table_display.sum(axis=1)
+                
+                # Reverse rows so the newest month sits at the very top of the table
+                table_display = table_display.iloc[::-1]
+                
+                # Format all numbers as currency
+                for col in table_display.columns:
+                    table_display[col] = table_display[col].map("${:,.2f}".format)
+                
+                table_display.index.name = "Month"
+                
+                st.dataframe(table_display, use_container_width=True)
         
         except Exception as e:
             st.error(f"Error loading Summary data: {e}")
