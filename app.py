@@ -156,7 +156,6 @@ if page == "📦 Inventory & Risk":
             inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
             df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
             
-            # SPLIT ILOC TO PREVENT GITHUB TRUNCATION
             inv_col_idx = m_map[m_sel]
             risk_inv = df_inv_risk.iloc[:, [0, inv_col_idx]].copy()
             risk_inv.columns = ["SKU", "Stock"]
@@ -218,7 +217,6 @@ if page == "📦 Inventory & Risk":
     inv_gid_2 = "856174189" if chan == "Amazon (FBA)" else "0"
     df_inv = load_csv(MAIN_SHEET_ID, inv_gid_2)
     
-    # SPLIT ILOC TO PREVENT GITHUB TRUNCATION
     inv_col_index = m_map[m_sel]
     s_df = df_inv.iloc[:, [0, inv_col_index]].copy()
     s_df.columns = ["SKU", "Stock"]
@@ -278,3 +276,244 @@ elif page == "💰 Sales Performance":
         recon = pd.merge(curr_week, prev_week, on='sku', how='outer', suffixes=('_C', '_P'))
         recon = recon.fillna(0)
         recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
+        recon = recon[recon['quantity_C'] > 0]
+        
+        m1, m2 = st.columns(2)
+        with m1:
+            cam_mask = recon['sku'].apply(is_cam)
+            v = recon[cam_mask]['quantity_C'].sum()
+            o = recon[cam_mask]['quantity_P'].sum()
+            st.metric("📸 Camera Units", f"{int(v)}", delta=f"{int(v-o)}")
+        with m2:
+            acc_mask = ~recon['sku'].apply(is_cam)
+            v = recon[acc_mask]['quantity_C'].sum()
+            o = recon[acc_mask]['quantity_P'].sum()
+            st.metric("🎒 Accessory Units", f"{int(v)}", delta=f"{int(v-o)}")
+
+        st.divider()
+        st.subheader("🚀 Weekly SKU Movers (Top 3 & Bottom 3)")
+        cam_r = recon[recon['sku'].apply(is_cam)]
+        acc_r = recon[~recon['sku'].apply(is_cam)]
+        
+        grid_a, grid_b = st.columns(2)
+        with grid_a:
+            st.success("📸 Camera Top 3")
+            top_cam = cam_r[cam_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']]
+            st.dataframe(top_cam, hide_index=True, use_container_width=True)
+            
+            st.error("📸 Camera Bottom 3")
+            bot_cam = cam_r[cam_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']]
+            st.dataframe(bot_cam, hide_index=True, use_container_width=True)
+            
+        with grid_b:
+            st.success("🎒 Accessory Top 3")
+            top_acc = acc_r[acc_r['Diff']>0].nlargest(3, 'Diff')[['sku', 'Diff']]
+            st.dataframe(top_acc, hide_index=True, use_container_width=True)
+            
+            st.error("🎒 Accessory Bottom 3")
+            bot_acc = acc_r[acc_r['Diff']<0].nsmallest(3, 'Diff')[['sku', 'Diff']]
+            st.dataframe(bot_acc, hide_index=True, use_container_width=True)
+
+        st.divider()
+        st.subheader(f"🏆 YTD {lt.year} Top 5 SKU Rankings")
+        ytd_mask = pd.to_datetime(df['date']).dt.year == lt.year
+        ytd = df[ytd_mask].groupby('sku')['quantity'].sum().reset_index()
+        y1, y2 = st.columns(2)
+        with y1:
+            st.markdown("#### 🥇 Top 5 Cameras")
+            top_c = ytd[ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_c, hide_index=True, use_container_width=True)
+            st.write(f"**Total Units:** {int(top_c['quantity'].sum()):,}")
+        with y2:
+            st.markdown("#### 🥇 Top 5 Accessories")
+            top_a = ytd[~ytd['sku'].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_a, hide_index=True, use_container_width=True)
+            st.write(f"**Total Units:** {int(top_a['quantity'].sum()):,}")
+
+    except Exception as e: 
+        st.error(f"Error: {e}")
+
+# --- NEW ADDITION: 3PL COSTS & LOGISTICS ---
+elif page == "🚚 3PL Costs & Logistics":
+    st.title("🚚 3PL Costs & Logistics Analytics")
+    
+    reg_3pl = st.sidebar.selectbox("Select Region for 3PL Data", list(SUMMARY_COLS.keys()))
+    has_shipping_data = reg_3pl in GIDS_3PL_SHIPPING
+    
+    if has_shipping_data:
+        t_sum, t_ship = st.tabs(["📊 Cost Summary", "🗺️ Shipping Analysis"])
+    else:
+        t_sum = st.container()
+        st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
+
+    # ==========================================
+    # TAB 1: SUMMARY COSTS 
+    # ==========================================
+    with t_sum:
+        try:
+            df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
+            
+            num_cols = df_sum.shape[1]
+            df_sum.columns = range(num_cols)
+            
+            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
+            df_sum = df_sum.dropna(subset=[0]) 
+            
+            cols = SUMMARY_COLS[reg_3pl]
+            f_col = cols["fulfill"]
+            s_col = cols["shipping"]
+            st_col = cols["storage"]
+            
+            for c in [f_col, s_col, st_col]:
+                if c < df_sum.shape[1]: 
+                    clean_str = df_sum[c].astype(str).str.replace(r'[$, ]', '', regex=True)
+                    df_sum[c] = pd.to_numeric(clean_str, errors='coerce').fillna(0)
+            
+            df_sum['YM'] = df_sum[0].dt.to_period('M')
+            
+            valid_cols = []
+            for c in [f_col, s_col, st_col]:
+                if c < df_sum.shape[1]:
+                    valid_cols.append(c)
+                    
+            monthly_costs = df_sum.groupby('YM')[valid_cols].sum().sum(axis=1)
+            valid_months = monthly_costs[monthly_costs > 0]
+            
+            if valid_months.empty:
+                st.warning("⚠️ Could not find any costs greater than $0 in the data.")
+            else:
+                most_recent_ym = valid_months.index.max()
+                curr_m = most_recent_ym.month
+                curr_y = most_recent_ym.year
+                
+                if curr_m == 1:
+                    prev_m = 12
+                    prev_y = curr_y - 1
+                else:
+                    prev_m = curr_m - 1
+                    prev_y = curr_y
+                    
+                curr_mask = (df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)
+                df_curr = df_sum[curr_mask]
+                
+                prev_mask = (df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)
+                df_prev = df_sum[prev_mask]
+                
+                display_date_str = datetime(curr_y, curr_m, 1).strftime('%B %Y')
+                st.subheader(f"💸 Monthly Cost Overview ({display_date_str})")
+                
+                curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
+                prev_fulfill = df_prev[f_col].sum() if f_col < df_prev.shape[1] else 0
+                
+                curr_shipping = df_curr[s_col].sum() if s_col < df_curr.shape[1] else 0
+                prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
+                
+                curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
+                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric(
+                    "Storage Cost", 
+                    f"${curr_storage:,.2f}", 
+                    delta=f"${curr_storage - prev_storage:,.2f}", 
+                    delta_color="inverse"
+                )
+                c2.metric(
+                    "Fulfillment Cost", 
+                    f"${curr_fulfill:,.2f}", 
+                    delta=f"${curr_fulfill - prev_fulfill:,.2f}", 
+                    delta_color="inverse"
+                )
+                c3.metric(
+                    "Total Shipping Cost", 
+                    f"${curr_shipping:,.2f}", 
+                    delta=f"${curr_shipping - prev_shipping:,.2f}", 
+                    delta_color="inverse"
+                )
+
+                st.divider()
+                st.subheader("📈 Monthly Cost Trends")
+                
+                trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
+                trend_df = trend_df.rename(columns={
+                    0: 'Date',
+                    f_col: 'Fulfillment Cost',
+                    s_col: 'Shipping Cost',
+                    st_col: 'Storage Cost'
+                })
+                
+                trend_df['MonthPeriod'] = trend_df['Date'].dt.to_period('M')
+                
+                group_cols = ['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']
+                monthly_trend = trend_df.groupby('MonthPeriod')[group_cols].sum()
+                
+                monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
+                
+                plot_data = monthly_trend.copy()
+                plot_data.index = plot_data.index.to_timestamp() 
+                plot_data = plot_data.reset_index()
+                
+                plot_data = plot_data.melt(
+                    id_vars='MonthPeriod', 
+                    var_name='Category', 
+                    value_name='Cost ($)'
+                )
+                plot_data.rename(columns={'MonthPeriod': 'Date'}, inplace=True)
+                
+                fig = px.line(
+                    plot_data, 
+                    x='Date', 
+                    y='Cost ($)', 
+                    color='Category',
+                    markers=True,
+                    color_discrete_map={
+                        'Shipping Cost': '#3498db',    
+                        'Fulfillment Cost': '#2ecc71', 
+                        'Storage Cost': '#e74c3c'      
+                    }
+                )
+                
+                fig.update_layout(
+                    xaxis_title="",
+                    yaxis_title="Amount ($)",
+                    legend_title="",
+                    legend=dict(
+                        orientation="v", 
+                        yanchor="top", 
+                        y=1, 
+                        xanchor="left", 
+                        x=1.02
+                    ),
+                    xaxis=dict(tickformat="%b %Y", tickangle=0),
+                    hovermode="x unified",
+                    margin=dict(l=0, r=0, t=30, b=0)
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.markdown("#### 📋 Monthly Breakdown")
+                
+                table_display = monthly_trend.copy()
+                table_display.index = table_display.index.astype(str) 
+                table_display['Total Monthly Cost'] = table_display.sum(axis=1)
+                
+                table_display = table_display.iloc[::-1]
+                
+                for col in table_display.columns:
+                    table_display[col] = table_display[col].map("${:,.2f}".format)
+                
+                table_display.index.name = "Month"
+                
+                st.dataframe(table_display, use_container_width=True)
+        
+        except Exception as e:
+            st.error(f"Error loading Summary data: {e}")
+
+    # ==========================================
+    # TAB 2: SHIPPING ANALYSIS (Placeholder for next step)
+    # ==========================================
+    if has_shipping_data:
+        with t_ship:
+            st.info("Shipping analysis will be built here next.")
+
+# --- END OF FILE ---
