@@ -48,8 +48,8 @@ GIDS_3PL_SHIPPING = {
 
 GIDS_RAW_SHIPPING = {
     "🇺🇸 US": "215858249",
-    "🇨🇦 CA": "91803080", 
-    "🇪🇺 EU": "1032280204"
+    "🇨🇦 CA": "", 
+    "🇪🇺 EU": "1062524574"
 }
 
 # --- REGION RANGES FOR SAFETY STOCK ---
@@ -346,6 +346,9 @@ elif page == "🚚 3PL Costs & Logistics":
     reg_3pl = st.sidebar.selectbox("Select Region for 3PL Data", list(SUMMARY_COLS.keys()))
     has_shipping_data = reg_3pl in GIDS_3PL_SHIPPING
     
+    # Setup the currency symbol dynamically
+    cur = "€" if reg_3pl == "🇪🇺 EU" else "$"
+    
     if has_shipping_data:
         t_sum, t_ship = st.tabs(["📊 Cost Summary", "🗺️ Shipping Analysis"])
     else:
@@ -372,7 +375,7 @@ elif page == "🚚 3PL Costs & Logistics":
             
             for c in [f_col, s_col, st_col]:
                 if c < df_sum.shape[1]: 
-                    clean_str = df_sum[c].astype(str).str.replace(r'[$, ]', '', regex=True)
+                    clean_str = df_sum[c].astype(str).str.replace(r'[$,€£ ]', '', regex=True)
                     df_sum[c] = pd.to_numeric(clean_str, errors='coerce').fillna(0)
             
             df_sum['YM'] = df_sum[0].dt.to_period('M')
@@ -386,7 +389,7 @@ elif page == "🚚 3PL Costs & Logistics":
             valid_months = monthly_costs[monthly_costs > 0]
             
             if valid_months.empty:
-                st.warning("⚠️ Could not find any costs greater than $0 in the data.")
+                st.warning("⚠️ Could not find any costs greater than 0 in the data.")
             else:
                 most_recent_ym = valid_months.index.max()
                 curr_m = most_recent_ym.month
@@ -420,20 +423,20 @@ elif page == "🚚 3PL Costs & Logistics":
                 c1, c2, c3 = st.columns(3)
                 c1.metric(
                     "Storage Cost", 
-                    f"${curr_storage:,.2f}", 
-                    delta=f"${curr_storage - prev_storage:,.2f}", 
+                    f"{cur}{curr_storage:,.2f}", 
+                    delta=f"{cur}{curr_storage - prev_storage:,.2f}", 
                     delta_color="inverse"
                 )
                 c2.metric(
                     "Fulfillment Cost", 
-                    f"${curr_fulfill:,.2f}", 
-                    delta=f"${curr_fulfill - prev_fulfill:,.2f}", 
+                    f"{cur}{curr_fulfill:,.2f}", 
+                    delta=f"{cur}{curr_fulfill - prev_fulfill:,.2f}", 
                     delta_color="inverse"
                 )
                 c3.metric(
                     "Total Shipping Cost", 
-                    f"${curr_shipping:,.2f}", 
-                    delta=f"${curr_shipping - prev_shipping:,.2f}", 
+                    f"{cur}{curr_shipping:,.2f}", 
+                    delta=f"{cur}{curr_shipping - prev_shipping:,.2f}", 
                     delta_color="inverse"
                 )
 
@@ -462,7 +465,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 table_display = table_display.iloc[::-1]
                 
                 for col in table_display.columns:
-                    table_display[col] = table_display[col].map("${:,.2f}".format)
+                    table_display[col] = table_display[col].map(cur + "{:,.2f}".format)
                 
                 table_display.index.name = "Month"
                 
@@ -490,6 +493,8 @@ elif page == "🚚 3PL Costs & Logistics":
                         df_raw['ParsedDate'] = pd.to_datetime(df_raw[0], errors='coerce')
                         if df_raw['ParsedDate'].isna().all():
                             df_raw['ParsedDate'] = pd.to_datetime(df_raw[1], errors='coerce')
+                        if df_raw['ParsedDate'].isna().all() and df_raw.shape[1] > 3:
+                            df_raw['ParsedDate'] = pd.to_datetime(df_raw[2], errors='coerce')
 
                         df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
                         
@@ -589,7 +594,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 else:
                     df_slice = df_states_raw.copy()
                 
-                df_slice[1] = df_slice[1].astype(str).str.replace(r'[$, ]', '', regex=True)
+                df_slice[1] = df_slice[1].astype(str).str.replace(r'[$,€£ ]', '', regex=True)
                 df_slice[1] = pd.to_numeric(df_slice[1], errors='coerce').fillna(0)
                 
                 df_filtered = df_slice[df_slice[1] > 0][[0, 1]]
@@ -597,7 +602,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 
                 df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                 
-                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].map("${:,.2f}".format)
+                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].map(cur + "{:,.2f}".format)
                 
                 st.dataframe(df_filtered, hide_index=True, use_container_width=True)
                 
