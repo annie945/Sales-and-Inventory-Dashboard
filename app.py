@@ -378,11 +378,9 @@ elif page == "🚚 3PL Costs & Logistics":
                     df_raw.columns = range(df_raw.shape[1])
                     
                     if df_raw.shape[1] >= 12: 
-                        # INTELLIGENT DATE SCANNER: Guarantees it doesn't pick static "Export Dates"
                         best_date_col = None
                         for c in range(min(15, df_raw.shape[1])):
                             parsed = pd.to_datetime(df_raw[c], errors='coerce')
-                            # True date column will have multiple unique days, not just 1 static timestamp
                             if parsed.notna().sum() > 5 and parsed.nunique() > 1:
                                 best_date_col = c
                                 break
@@ -402,30 +400,41 @@ elif page == "🚚 3PL Costs & Logistics":
                             df_raw_prev = df_raw_valid[mask_prev]
                             
                             if reg_3pl == "🇪🇺 EU":
-                                order_col, size_col, carrier_col = 12, 6, 15 # Cols M, G, P
-                                count_unique = True
-                            else:
-                                order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
-                                count_unique = False
-                            
-                            if count_unique:
+                                # EU Logic (Find "picking" in Col G, sum Col H)
+                                order_col, carrier_col = 12, 15 # Cols M, P
+                                
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
                                 prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().nunique()
                                 
-                                # FIX: Drop duplicate rows for the same order so Carrier Pie Chart is accurate!
                                 df_carrier_source = df_raw_recent.drop_duplicates(subset=[order_col])
+                                
+                                # Current Average Order Size
+                                mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
+                                clean_size_curr = df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                                total_items_curr = pd.to_numeric(clean_size_curr, errors='coerce').sum()
+                                
+                                # Previous Average Order Size
+                                mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
+                                clean_size_prev = df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                                total_items_prev = pd.to_numeric(clean_size_prev, errors='coerce').sum()
+                                
                             else:
+                                # US/CA Logic
+                                order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
+                                
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().count()
                                 prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().count()
+                                
                                 df_carrier_source = df_raw_recent
                                 
-                            # TOTAL SIZE SUMMED / TOTAL UNIQUE ORDERS
-                            clean_size_curr = df_raw_recent[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
-                            total_items_curr = pd.to_numeric(clean_size_curr, errors='coerce').sum()
+                                clean_size_curr = df_raw_recent[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                                total_items_curr = pd.to_numeric(clean_size_curr, errors='coerce').sum()
+                                
+                                clean_size_prev = df_raw_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
+                                total_items_prev = pd.to_numeric(clean_size_prev, errors='coerce').sum()
+                                
+                            # Calculate final averages and deltas
                             avg_order_size = total_items_curr / total_orders if total_orders > 0 else 0
-                            
-                            clean_size_prev = df_raw_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
-                            total_items_prev = pd.to_numeric(clean_size_prev, errors='coerce').sum()
                             prev_avg_order_size = total_items_prev / prev_total_orders if prev_total_orders > 0 else 0
                             
                             prev_total_orders = 0 if pd.isna(prev_total_orders) else prev_total_orders
@@ -474,7 +483,6 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
                 
-                # Apply explicit slicing constraints
                 if reg_3pl == "🇺🇸 US":
                     df_slice = df_states_raw.iloc[1:51].copy() # Rows A2-A51
                 elif reg_3pl == "🇨🇦 CA":
