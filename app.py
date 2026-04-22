@@ -145,31 +145,54 @@ if page == "📦 Inventory & Risk":
             risk_inv.columns = ["SKU", "Stock"]
             risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int)
 
-            # --- FIX: Aggregating Forecast Demand to prevent duplicate SKUs ---
+            # --- Duplicate Combiner Logic ---
+            # Sum demand by SKU so we don't get duplicates in the table
             demand_dict = {}
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip().upper()
-                if not is_valid_sku(sku): continue
-                row_demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
-                demand_dict[sku] = demand_dict.get(sku, 0) + row_demand
+                if not is_valid_sku(sku): 
+                    continue
+                
+                demand = 0
+                for m in target_months:
+                    if m in f_df.columns:
+                        val = pd.to_numeric(row[m], errors='coerce')
+                        if pd.notna(val):
+                            demand += val
+                
+                demand_dict[sku] = demand_dict.get(sku, 0) + demand
 
             risk_list = []
-            for sku, demand in demand_dict.items():
-                match_safe = safety_df[safety_df.iloc[:,0].astype(str).str.strip().str.upper() == sku]
-                safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce') if not match_safe.empty else 0
-                live = risk_inv[risk_inv["SKU"].astype(str).str.strip().str.upper() == sku]["Stock"].sum()
-                inbound = po_sum[po_sum["SKU"].astype(str).str.strip().str.upper() == sku]["Qty"].sum()
+            for sku_upper, demand in demand_dict.items():
+                sku_lower = sku_upper.lower()
+                
+                safe_skus = safety_df.iloc[:,0].astype(str).str.lower().str.strip()
+                match_safe = safety_df[safe_skus == sku_lower]
+                safe_val = 0
+                if not match_safe.empty:
+                    safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce')
+                    if pd.isna(safe_val): safe_val = 0
+                
+                live_skus = risk_inv["SKU"].astype(str).str.lower().str.strip()
+                match_live = risk_inv[live_skus == sku_lower]
+                live = match_live["Stock"].sum()
+                
+                inbound_skus = po_sum["SKU"].astype(str).str.lower().str.strip()
+                match_inbound = po_sum[inbound_skus == sku_lower]
+                inbound = match_inbound["Qty"].sum()
                 
                 balance = (live + inbound) - demand - safe_val
-                
-                if balance < 0 and live != 0:
+                if balance < 0:
                     risk_list.append({
-                        "SKU": sku, "Stock": int(live), "Inbound": int(inbound), 
-                        "3m Forecast": int(demand), "Shortage": int(abs(balance))
+                        "SKU": sku_upper, 
+                        "Stock": int(live), 
+                        "Inbound": int(inbound), 
+                        "3m Forecast": int(demand), 
+                        "Shortage": int(abs(balance))
                     })
             
             if risk_list:
-                st.error(f"⚠️ {len(risk_list)} SKUs at risk (excluding zero-stock items).")
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
                 st.dataframe(pd.DataFrame(risk_list).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
             else: 
                 st.success("✅ Forecast demand met.")
