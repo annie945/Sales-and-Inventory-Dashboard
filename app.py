@@ -498,20 +498,43 @@ elif page == "🚚 3PL Costs & Logistics":
                             curr_m = recent_date.month
                             curr_y = recent_date.year
                             
-                            # Filter to ONLY the most recent month!
+                            # Calculate Previous Month
+                            if curr_m == 1:
+                                prev_m = 12
+                                prev_y = curr_y - 1
+                            else:
+                                prev_m = curr_m - 1
+                                prev_y = curr_y
+                            
+                            # Filter to current and previous months
                             mask_recent = (df_raw_valid['ParsedDate'].dt.month == curr_m) & (df_raw_valid['ParsedDate'].dt.year == curr_y)
                             df_raw_recent = df_raw_valid[mask_recent]
                             
-                            # Col C (2) = Order Count, Col L (11) = Avg Size
+                            mask_prev = (df_raw_valid['ParsedDate'].dt.month == prev_m) & (df_raw_valid['ParsedDate'].dt.year == prev_y)
+                            df_raw_prev = df_raw_valid[mask_prev]
+                            
+                            # Col C (2) = Order Count, Col L (11) = Avg Size (Current Month)
                             total_orders = df_raw_recent[2].replace('', pd.NA).dropna().count()
                             avg_order_size = pd.to_numeric(df_raw_recent[11], errors='coerce').mean()
+                            
+                            # Previous Month calculations for Delta
+                            prev_total_orders = df_raw_prev[2].replace('', pd.NA).dropna().count()
+                            prev_avg_order_size = pd.to_numeric(df_raw_prev[11], errors='coerce').mean()
+                            
+                            # Handle empty previous months gracefully
+                            prev_total_orders = 0 if pd.isna(prev_total_orders) else prev_total_orders
+                            prev_avg_order_size = 0 if pd.isna(prev_avg_order_size) else prev_avg_order_size
+                            avg_order_size = 0 if pd.isna(avg_order_size) else avg_order_size
+                            
+                            delta_orders = int(total_orders - prev_total_orders)
+                            delta_size = float(avg_order_size - prev_avg_order_size)
                             
                             display_month_str = recent_date.strftime('%B %Y')
                             st.markdown(f"#### 📊 Order Metrics ({display_month_str})")
                             
                             col1, col2 = st.columns(2)
-                            col1.metric("📦 Orders Shipped", f"{int(total_orders):,}")
-                            col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}")
+                            col1.metric("📦 Orders Shipped", f"{int(total_orders):,}", delta=delta_orders)
+                            col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}", delta=f"{delta_size:,.2f}")
                             
                             st.divider()
                             st.markdown(f"#### 🚚 Carrier Usage Percentage ({display_month_str})")
