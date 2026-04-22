@@ -48,7 +48,7 @@ GIDS_3PL_SHIPPING = {
 
 GIDS_RAW_SHIPPING = {
     "🇺🇸 US": "215858249",
-    "🇨🇦 CA": "", 
+    "🇨🇦 CA": "91803080", 
     "🇪🇺 EU": "1062524574"
 }
 
@@ -464,8 +464,9 @@ elif page == "🚚 3PL Costs & Logistics":
                 
                 table_display = table_display.iloc[::-1]
                 
+                # FIXED THE FORMATTING CRASH HERE using lambda
                 for col in table_display.columns:
-                    table_display[col] = table_display[col].map(cur + "{:,.2f}".format)
+                    table_display[col] = table_display[col].apply(lambda x: f"{cur}{x:,.2f}" if pd.notna(x) else f"{cur}0.00")
                 
                 table_display.index.name = "Month"
                 
@@ -489,16 +490,21 @@ elif page == "🚚 3PL Costs & Logistics":
                     df_raw.columns = range(df_raw.shape[1])
                     
                     if df_raw.shape[1] >= 12: 
-                        # Find the date column
-                        df_raw['ParsedDate'] = pd.to_datetime(df_raw[0], errors='coerce')
-                        if df_raw['ParsedDate'].isna().all():
-                            df_raw['ParsedDate'] = pd.to_datetime(df_raw[1], errors='coerce')
-                        if df_raw['ParsedDate'].isna().all() and df_raw.shape[1] > 3:
-                            df_raw['ParsedDate'] = pd.to_datetime(df_raw[2], errors='coerce')
-
-                        df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
+                        # AGGRESSIVE DATE SCANNER: Scan every column to find the true dates
+                        best_date_col = None
+                        max_valid = 0
+                        for c in range(df_raw.shape[1]):
+                            parsed = pd.to_datetime(df_raw[c], errors='coerce')
+                            valid_count = parsed.notna().sum()
+                            # If a column has lots of dates, it's our winner
+                            if valid_count > max_valid and valid_count > 5:
+                                max_valid = valid_count
+                                best_date_col = c
                         
-                        if not df_raw_valid.empty:
+                        if best_date_col is not None:
+                            df_raw['ParsedDate'] = pd.to_datetime(df_raw[best_date_col], errors='coerce')
+                            df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
+                            
                             recent_date = df_raw_valid['ParsedDate'].max()
                             curr_m = recent_date.month
                             curr_y = recent_date.year
@@ -532,8 +538,12 @@ elif page == "🚚 3PL Costs & Logistics":
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().count()
                                 prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().count()
                                 
-                            avg_order_size = pd.to_numeric(df_raw_recent[size_col], errors='coerce').mean()
-                            prev_avg_order_size = pd.to_numeric(df_raw_prev[size_col], errors='coerce').mean()
+                            # SCRUBBER: Force out any hidden text to prevent Average Size from being 0
+                            clean_size_curr = df_raw_recent[size_col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                            avg_order_size = pd.to_numeric(clean_size_curr, errors='coerce').mean()
+                            
+                            clean_size_prev = df_raw_prev[size_col].astype(str).str.replace(r'[^\d.]', '', regex=True)
+                            prev_avg_order_size = pd.to_numeric(clean_size_prev, errors='coerce').mean()
                             
                             # Delta handling
                             prev_total_orders = 0 if pd.isna(prev_total_orders) else prev_total_orders
@@ -602,7 +612,8 @@ elif page == "🚚 3PL Costs & Logistics":
                 
                 df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                 
-                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].map(cur + "{:,.2f}".format)
+                # FIXED THE FORMATTING CRASH HERE using lambda
+                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}" if pd.notna(x) else f"{cur}0.00")
                 
                 st.dataframe(df_filtered, hide_index=True, use_container_width=True)
                 
