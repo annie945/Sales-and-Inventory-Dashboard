@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import altair as alt  # <-- Native to Streamlit, NO installation required!
 
 # 1. Setup & Styling
 st.set_page_config(layout="wide", page_title="Global Inventory & Risk")
@@ -31,7 +32,7 @@ GID_PO_GRID = "1801670245"
 THREE_PL_SHEET_ID = "1UzHDyqkj1fvGYOXk8e_iOSWYsIofHB7id0hjEaX7Rm4"
 GID_3PL_SUMMARY = "972554877" 
 
-# Column mappings (0-indexed: A=0, B=1, C=2...)
+# Summary Cost Columns
 SUMMARY_COLS = {
     "🇺🇸 US": {"fulfill": 1, "shipping": 2, "storage": 3},
     "🇨🇦 CA": {"fulfill": 4, "shipping": 5, "storage": 6},
@@ -39,10 +40,17 @@ SUMMARY_COLS = {
     "🇬🇧 UK": {"fulfill": 13, "shipping": 14, "storage": 15}
 }
 
+# State/Month Summary Sheets
 GIDS_3PL_SHIPPING = {
     "🇺🇸 US": "1369957058", 
     "🇨🇦 CA": "332821648", 
     "🇪🇺 EU": "1032280204"
+}
+
+# Raw Shipping Sheets (For Carriers & Order Sizes)
+GIDS_RAW_SHIPPING = {
+    "🇺🇸 US": "215858249",
+    "🇨🇦 CA": "91803080" # You can add the CA raw sheet GID here later!
 }
 
 # --- REGION RANGES FOR SAFETY STOCK ---
@@ -465,10 +473,92 @@ elif page == "🚚 3PL Costs & Logistics":
             st.error(f"Error loading Summary data: {e}")
 
     # ==========================================
-    # TAB 2: SHIPPING ANALYSIS (Placeholder for next step)
+    # TAB 2: SHIPPING ANALYSIS 
     # ==========================================
     if has_shipping_data:
         with t_ship:
-            st.info("Shipping analysis will be built here next.")
+            try:
+                st.subheader(f"🗺️ {reg_3pl} Shipping Analysis")
+                
+                # --- SECTION 1: RAW DATA (CARRIERS & ORDER SIZES) ---
+                raw_gid = GIDS_RAW_SHIPPING.get(reg_3pl, "")
+                if raw_gid:
+                    df_raw = load_csv(THREE_PL_SHEET_ID, raw_gid)
+                    df_raw.columns = range(df_raw.shape[1])
+                    
+                    if df_raw.shape[1] >= 12: 
+                        # Col C (2) = Order Count, Col L (11) = Avg Size
+                        total_orders = df_raw[2].replace('', pd.NA).dropna().count()
+                        avg_order_size = pd.to_numeric(df_raw[11], errors='coerce').mean()
+                        
+                        st.markdown("#### 📊 Overall Order Metrics")
+                        col1, col2 = st.columns(2)
+                        col1.metric("📦 Total Number of Orders", f"{int(total_orders):,}")
+                        col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}")
+                        
+                        st.divider()
+                        
+                        st.markdown("#### 🚚 Carrier Usage Percentage")
+                        
+                        # Col G (6) = Carrier Name
+                        carriers = df_raw[6].replace('', pd.NA).dropna()
+                        if not carriers.empty:
+                            c_counts = carriers.value_counts().reset_index()
+                            c_counts.columns = ['Carrier', 'Orders']
+                            c_counts['Percentage'] = (c_counts['Orders'] / c_counts['Orders'].sum()) * 100
+                            
+                            chart_col, table_col = st.columns([1, 1])
+                            
+                            with chart_col:
+                                # BEAUTIFUL NATIVE PIE CHART (No Plotly needed)
+                                pie = alt.Chart(c_counts).mark_arc(innerRadius=50).encode(
+                                    theta=alt.Theta(field="Orders", type="quantitative"),
+                                    color=alt.Color(field="Carrier", type="nominal"),
+                                    tooltip=['Carrier', 'Orders', alt.Tooltip('Percentage', format='.1f')]
+                                ).properties(height=350)
+                                st.altair_chart(pie, use_container_width=True)
+                            
+                            with table_col:
+                                disp_counts = c_counts.copy()
+                                disp_counts['Percentage'] = disp_counts['Percentage'].map("{:.1f}%".format)
+                                st.dataframe(disp_counts, hide_index=True, use_container_width=True)
+                else:
+                    st.info(f"ℹ️ Raw shipping data GID not yet mapped for {reg_3pl}. Order & Carrier metrics skipped.")
+
+                st.divider()
+
+                # --- SECTION 2: STATES & PROVINCES SUMMARY ---
+                st.markdown(f"#### 📍 {reg_3pl} Cost by State/Province")
+                df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
+                df_states_raw.columns = range(df_states_raw.shape[1])
+                
+                # Slicing ranges based exactly on the Google Sheet structure
+                if reg_3pl == "🇺🇸 US":
+                    # Row A2 to A51 = index 0 to 49 in pandas
+                    df_slice = df_states_raw.iloc[0:50].copy()
+                elif reg_3pl == "🇨🇦 CA":
+                    # Row A2 to A14 = index 0 to 12
+                    df_slice = df_states_raw.iloc[0:13].copy()
+                else:
+                    df_slice = df_states_raw.copy()
+                
+                # Assuming Column A (0) is State, Column B (1) is Cost
+                df_slice[1] = df_slice[1].astype(str).str.replace(r'[$, ]', '', regex=True)
+                df_slice[1] = pd.to_numeric(df_slice[1], errors='coerce').fillna(0)
+                
+                # Filter only where cost is greater than 0
+                df_filtered = df_slice[df_slice[1] > 0][[0, 1]]
+                df_filtered.columns = ["State / Province", "Shipping Cost"]
+                
+                # Sort from most expensive to least
+                df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
+                
+                # Add dollar signs for display
+                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].map("${:,.2f}".format)
+                
+                st.dataframe(df_filtered, hide_index=True, use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Error loading Shipping Analysis: {e}")
 
 # --- END OF FILE ---
