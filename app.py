@@ -145,54 +145,30 @@ if page == "📦 Inventory & Risk":
             risk_inv.columns = ["SKU", "Stock"]
             risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int)
 
-            # --- Duplicate Combiner Logic ---
-            # Sum demand by SKU so we don't get duplicates in the table
             demand_dict = {}
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip().upper()
-                if not is_valid_sku(sku): 
-                    continue
-                
-                demand = 0
-                for m in target_months:
-                    if m in f_df.columns:
-                        val = pd.to_numeric(row[m], errors='coerce')
-                        if pd.notna(val):
-                            demand += val
-                
-                demand_dict[sku] = demand_dict.get(sku, 0) + demand
+                if not is_valid_sku(sku): continue
+                row_demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
+                demand_dict[sku] = demand_dict.get(sku, 0) + row_demand
 
             risk_list = []
-            for sku_upper, demand in demand_dict.items():
-                sku_lower = sku_upper.lower()
-                
-                safe_skus = safety_df.iloc[:,0].astype(str).str.lower().str.strip()
-                match_safe = safety_df[safe_skus == sku_lower]
-                safe_val = 0
-                if not match_safe.empty:
-                    safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce')
-                    if pd.isna(safe_val): safe_val = 0
-                
-                live_skus = risk_inv["SKU"].astype(str).str.lower().str.strip()
-                match_live = risk_inv[live_skus == sku_lower]
-                live = match_live["Stock"].sum()
-                
-                inbound_skus = po_sum["SKU"].astype(str).str.lower().str.strip()
-                match_inbound = po_sum[inbound_skus == sku_lower]
-                inbound = match_inbound["Qty"].sum()
+            for sku, demand in demand_dict.items():
+                match_safe = safety_df[safety_df.iloc[:,0].astype(str).str.strip().str.upper() == sku]
+                safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce') if not match_safe.empty else 0
+                live = risk_inv[risk_inv["SKU"].astype(str).str.strip().str.upper() == sku]["Stock"].sum()
+                inbound = po_sum[po_sum["SKU"].astype(str).str.strip().str.upper() == sku]["Qty"].sum()
                 
                 balance = (live + inbound) - demand - safe_val
-                if balance < 0:
+                
+                if balance < 0 and live != 0:
                     risk_list.append({
-                        "SKU": sku_upper, 
-                        "Stock": int(live), 
-                        "Inbound": int(inbound), 
-                        "3m Forecast": int(demand), 
-                        "Shortage": int(abs(balance))
+                        "SKU": sku, "Stock": int(live), "Inbound": int(inbound), 
+                        "3m Forecast": int(demand), "Shortage": int(abs(balance))
                     })
             
             if risk_list:
-                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk (excluding zero-stock items).")
                 st.dataframe(pd.DataFrame(risk_list).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
             else: 
                 st.success("✅ Forecast demand met.")
@@ -401,6 +377,8 @@ elif page == "🚚 3PL Costs & Logistics":
                 
                 # --- SECTION 1: RAW DATA (CARRIERS & ORDER SIZES) ---
                 raw_gid = GIDS_RAW_SHIPPING.get(reg_3pl, "")
+                loc_counts = pd.DataFrame()
+                
                 if raw_gid:
                     df_raw = load_csv(THREE_PL_SHEET_ID, raw_gid)
                     df_raw.columns = range(df_raw.shape[1])
@@ -430,6 +408,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             if reg_3pl == "🇪🇺 EU":
                                 # EU Logic
                                 order_col, carrier_col = 12, 15 # Cols M, P
+                                count_unique = True
                                 
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
                                 prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().nunique()
@@ -447,6 +426,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             else:
                                 # US/CA Logic
                                 order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
+                                count_unique = False
                                 
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().count()
                                 prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().count()
@@ -468,6 +448,25 @@ elif page == "🚚 3PL Costs & Logistics":
                             
                             delta_orders = int(total_orders - prev_total_orders)
                             delta_size = float(avg_order_size - prev_avg_order_size)
+                            
+                            # --- SMART LOCATION FINDER (For Total Orders per Region) ---
+                            loc_col = None
+                            for c in range(df_raw.shape[1]):
+                                header_str = str(df_raw.iloc[0, c]).lower()
+                                if reg_3pl == "🇪🇺 EU" and ("country" in header_str or "destination" in header_str):
+                                    loc_col = c
+                                    break
+                                elif reg_3pl != "🇪🇺 EU" and ("state" in header_str or "province" in header_str):
+                                    loc_col = c
+                                    break
+                            
+                            if loc_col is not None:
+                                if count_unique:
+                                    loc_counts = df_raw_recent.groupby(loc_col)[order_col].nunique().reset_index()
+                                else:
+                                    loc_counts = df_raw_recent.groupby(loc_col)[order_col].count().reset_index()
+                                loc_counts.columns = ['Location_Raw', 'Total Orders']
+                                loc_counts['Location_Raw'] = loc_counts['Location_Raw'].astype(str).str.strip().str.lower()
                             
                             display_month_str = recent_date.strftime('%B %Y')
                             st.markdown(f"#### 📊 Order Metrics ({display_month_str})")
@@ -506,7 +505,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 st.divider()
 
                 # --- SECTION 2: STATES & PROVINCES SUMMARY ---
-                st.markdown(f"#### 📍 {reg_3pl} Cost by Location")
+                st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
                 
@@ -530,8 +529,23 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_filtered.columns = ["Location", "Shipping Cost"]
                 
                 if not df_filtered.empty:
+                    # Match Location with Smart Raw Orders
+                    df_filtered["Match_Loc"] = df_filtered["Location"].astype(str).str.strip().str.lower()
+                    
+                    if not loc_counts.empty:
+                        df_filtered = pd.merge(df_filtered, loc_counts, left_on='Match_Loc', right_on='Location_Raw', how='left')
+                        df_filtered['Total Orders'] = df_filtered['Total Orders'].fillna(0).astype(int)
+                    else:
+                        df_filtered['Total Orders'] = 0
+                        st.info("ℹ️ Could not automatically find the Location column in Raw Data to count orders.")
+                    
+                    # Clean up and reorder columns
+                    df_filtered = df_filtered.drop(columns=['Match_Loc', 'Location_Raw'], errors='ignore')
+                    df_filtered = df_filtered[['Location', 'Total Orders', 'Shipping Cost']]
+                    
                     df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                     df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}")
+                    
                     st.dataframe(df_filtered, hide_index=True, use_container_width=True)
                 else:
                     st.warning(f"⚠️ Could not find costs > 0 for column index {month_col_idx}.")
