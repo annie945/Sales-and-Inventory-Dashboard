@@ -145,22 +145,26 @@ if page == "📦 Inventory & Risk":
             risk_inv.columns = ["SKU", "Stock"]
             risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int)
 
-            risk_list = []
+            # --- FIX: Aggregating Forecast Demand to prevent duplicate SKUs ---
+            demand_dict = {}
             for _, row in f_df.iterrows():
-                sku = str(row.iloc[0]).strip()
+                sku = str(row.iloc[0]).strip().upper()
                 if not is_valid_sku(sku): continue
-                
-                demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
-                match_safe = safety_df[safety_df.iloc[:,0].astype(str).str.lower().str.strip() == sku.lower()]
+                row_demand = sum([pd.to_numeric(row[m], errors='coerce') for m in target_months if m in f_df.columns])
+                demand_dict[sku] = demand_dict.get(sku, 0) + row_demand
+
+            risk_list = []
+            for sku, demand in demand_dict.items():
+                match_safe = safety_df[safety_df.iloc[:,0].astype(str).str.strip().str.upper() == sku]
                 safe_val = pd.to_numeric(match_safe.iloc[0,2], errors='coerce') if not match_safe.empty else 0
-                live = risk_inv[risk_inv["SKU"].astype(str).str.lower().str.strip() == sku.lower()]["Stock"].sum()
-                inbound = po_sum[po_sum["SKU"].astype(str).str.lower().str.strip() == sku.lower()]["Qty"].sum()
+                live = risk_inv[risk_inv["SKU"].astype(str).str.strip().str.upper() == sku]["Stock"].sum()
+                inbound = po_sum[po_sum["SKU"].astype(str).str.strip().str.upper() == sku]["Qty"].sum()
                 
                 balance = (live + inbound) - demand - safe_val
-                # ADDED CONDITION: Only report if stock is not zero
+                
                 if balance < 0 and live != 0:
                     risk_list.append({
-                        "SKU": sku.upper(), "Stock": int(live), "Inbound": int(inbound), 
+                        "SKU": sku, "Stock": int(live), "Inbound": int(inbound), 
                         "3m Forecast": int(demand), "Shortage": int(abs(balance))
                     })
             
@@ -450,7 +454,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}", delta=f"{delta_size:,.2f}")
                             
                             st.divider()
-                            st.markdown(f"#### 🚚 Carrier Usage Percentage ({display_month_str})")
+                            st.markdown(f"#### 🚚 Carrier Usage ({display_month_str})")
                             
                             carriers = df_carrier_source[carrier_col].replace('', pd.NA).dropna()
                             if not carriers.empty:
@@ -479,7 +483,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 st.divider()
 
                 # --- SECTION 2: STATES & PROVINCES SUMMARY ---
-                st.markdown(f"#### 📍 {reg_3pl} Cost by State/Province/Country")
+                st.markdown(f"#### 📍 {reg_3pl} Cost by Location")
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
                 
