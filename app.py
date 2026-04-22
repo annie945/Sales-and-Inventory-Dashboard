@@ -157,14 +157,15 @@ if page == "📦 Inventory & Risk":
                 inbound = po_sum[po_sum["SKU"].astype(str).str.lower().str.strip() == sku.lower()]["Qty"].sum()
                 
                 balance = (live + inbound) - demand - safe_val
-                if balance < 0:
+                # ADDED CONDITION: Only report if stock is not zero
+                if balance < 0 and live != 0:
                     risk_list.append({
                         "SKU": sku.upper(), "Stock": int(live), "Inbound": int(inbound), 
                         "3m Forecast": int(demand), "Shortage": int(abs(balance))
                     })
             
             if risk_list:
-                st.error(f"⚠️ {len(risk_list)} SKUs at risk.")
+                st.error(f"⚠️ {len(risk_list)} SKUs at risk (excluding zero-stock items).")
                 st.dataframe(pd.DataFrame(risk_list).sort_values(by="Shortage", ascending=False), use_container_width=True, hide_index=True)
             else: 
                 st.success("✅ Forecast demand met.")
@@ -332,7 +333,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
                 
                 curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
-                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
+                prev_storage = df_prev[st_col].sum() if st_col < df_curr.shape[1] else 0
                 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Storage Cost", f"{cur}{curr_storage:,.2f}", delta=f"{cur}{curr_storage - prev_storage:,.2f}", delta_color="inverse")
@@ -400,7 +401,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             df_raw_prev = df_raw_valid[mask_prev]
                             
                             if reg_3pl == "🇪🇺 EU":
-                                # EU Logic (Find "picking" in Col G, sum Col H)
+                                # EU Logic
                                 order_col, carrier_col = 12, 15 # Cols M, P
                                 
                                 total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
@@ -408,12 +409,10 @@ elif page == "🚚 3PL Costs & Logistics":
                                 
                                 df_carrier_source = df_raw_recent.drop_duplicates(subset=[order_col])
                                 
-                                # Current Average Order Size
                                 mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
                                 clean_size_curr = df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True)
                                 total_items_curr = pd.to_numeric(clean_size_curr, errors='coerce').sum()
                                 
-                                # Previous Average Order Size
                                 mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
                                 clean_size_prev = df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True)
                                 total_items_prev = pd.to_numeric(clean_size_prev, errors='coerce').sum()
@@ -433,7 +432,6 @@ elif page == "🚚 3PL Costs & Logistics":
                                 clean_size_prev = df_raw_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True)
                                 total_items_prev = pd.to_numeric(clean_size_prev, errors='coerce').sum()
                                 
-                            # Calculate final averages and deltas
                             avg_order_size = total_items_curr / total_orders if total_orders > 0 else 0
                             prev_avg_order_size = total_items_prev / prev_total_orders if prev_total_orders > 0 else 0
                             
@@ -460,17 +458,19 @@ elif page == "🚚 3PL Costs & Logistics":
                                 c_counts.columns = ['Carrier', 'Orders']
                                 c_counts['Percentage'] = (c_counts['Orders'] / c_counts['Orders'].sum()) * 100
                                 chart_col, table_col = st.columns([1, 1])
+                                
                                 with chart_col:
                                     pie = alt.Chart(c_counts).mark_arc(innerRadius=50).encode(
                                         theta=alt.Theta(field="Orders", type="quantitative"),
                                         color=alt.Color(field="Carrier", type="nominal"),
-                                        tooltip=['Carrier', 'Orders', alt.Tooltip('Percentage', format='.1f')]
+                                        tooltip=['Carrier', alt.Tooltip('Percentage', format='.1f')]
                                     ).properties(height=350)
                                     st.altair_chart(pie, use_container_width=True)
+                                
                                 with table_col:
                                     disp_counts = c_counts.copy()
                                     disp_counts['Percentage'] = disp_counts['Percentage'].map("{:.1f}%".format)
-                                    st.dataframe(disp_counts, hide_index=True, use_container_width=True)
+                                    st.dataframe(disp_counts[['Carrier', 'Percentage']], hide_index=True, use_container_width=True)
                         else:
                             st.info("⚠️ Could not find real dates in raw data to filter by month.")
                 else:
