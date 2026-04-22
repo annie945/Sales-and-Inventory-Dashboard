@@ -48,7 +48,8 @@ GIDS_3PL_SHIPPING = {
 
 GIDS_RAW_SHIPPING = {
     "🇺🇸 US": "215858249",
-    "🇨🇦 CA": "91803080" 
+    "🇨🇦 CA": "91803080", 
+    "🇪🇺 EU": "1032280204"
 }
 
 # --- REGION RANGES FOR SAFETY STOCK ---
@@ -485,7 +486,7 @@ elif page == "🚚 3PL Costs & Logistics":
                     df_raw.columns = range(df_raw.shape[1])
                     
                     if df_raw.shape[1] >= 12: 
-                        # Find the date column (usually column 0 or 1 in raw exports)
+                        # Find the date column
                         df_raw['ParsedDate'] = pd.to_datetime(df_raw[0], errors='coerce')
                         if df_raw['ParsedDate'].isna().all():
                             df_raw['ParsedDate'] = pd.to_datetime(df_raw[1], errors='coerce')
@@ -493,12 +494,10 @@ elif page == "🚚 3PL Costs & Logistics":
                         df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
                         
                         if not df_raw_valid.empty:
-                            # Find Most Recent Month dynamically
                             recent_date = df_raw_valid['ParsedDate'].max()
                             curr_m = recent_date.month
                             curr_y = recent_date.year
                             
-                            # Calculate Previous Month
                             if curr_m == 1:
                                 prev_m = 12
                                 prev_y = curr_y - 1
@@ -506,22 +505,32 @@ elif page == "🚚 3PL Costs & Logistics":
                                 prev_m = curr_m - 1
                                 prev_y = curr_y
                             
-                            # Filter to current and previous months
                             mask_recent = (df_raw_valid['ParsedDate'].dt.month == curr_m) & (df_raw_valid['ParsedDate'].dt.year == curr_y)
                             df_raw_recent = df_raw_valid[mask_recent]
                             
                             mask_prev = (df_raw_valid['ParsedDate'].dt.month == prev_m) & (df_raw_valid['ParsedDate'].dt.year == prev_y)
                             df_raw_prev = df_raw_valid[mask_prev]
                             
-                            # Col C (2) = Order Count, Col L (11) = Avg Size (Current Month)
-                            total_orders = df_raw_recent[2].replace('', pd.NA).dropna().count()
-                            avg_order_size = pd.to_numeric(df_raw_recent[11], errors='coerce').mean()
+                            # Determine correct columns based on Region
+                            if reg_3pl == "🇪🇺 EU":
+                                order_col, size_col, carrier_col = 12, 6, 15 # Cols M, G, P
+                                count_unique = True
+                            else:
+                                order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
+                                count_unique = False
                             
-                            # Previous Month calculations for Delta
-                            prev_total_orders = df_raw_prev[2].replace('', pd.NA).dropna().count()
-                            prev_avg_order_size = pd.to_numeric(df_raw_prev[11], errors='coerce').mean()
+                            # Current Month Calcs
+                            if count_unique:
+                                total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
+                                prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().nunique()
+                            else:
+                                total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().count()
+                                prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().count()
+                                
+                            avg_order_size = pd.to_numeric(df_raw_recent[size_col], errors='coerce').mean()
+                            prev_avg_order_size = pd.to_numeric(df_raw_prev[size_col], errors='coerce').mean()
                             
-                            # Handle empty previous months gracefully
+                            # Delta handling
                             prev_total_orders = 0 if pd.isna(prev_total_orders) else prev_total_orders
                             prev_avg_order_size = 0 if pd.isna(prev_avg_order_size) else prev_avg_order_size
                             avg_order_size = 0 if pd.isna(avg_order_size) else avg_order_size
@@ -539,8 +548,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             st.divider()
                             st.markdown(f"#### 🚚 Carrier Usage Percentage ({display_month_str})")
                             
-                            # Col G (6) = Carrier Name
-                            carriers = df_raw_recent[6].replace('', pd.NA).dropna()
+                            carriers = df_raw_recent[carrier_col].replace('', pd.NA).dropna()
                             if not carriers.empty:
                                 c_counts = carriers.value_counts().reset_index()
                                 c_counts.columns = ['Carrier', 'Orders']
@@ -549,7 +557,6 @@ elif page == "🚚 3PL Costs & Logistics":
                                 chart_col, table_col = st.columns([1, 1])
                                 
                                 with chart_col:
-                                    # BEAUTIFUL NATIVE PIE CHART
                                     pie = alt.Chart(c_counts).mark_arc(innerRadius=50).encode(
                                         theta=alt.Theta(field="Orders", type="quantitative"),
                                         color=alt.Color(field="Carrier", type="nominal"),
@@ -569,32 +576,27 @@ elif page == "🚚 3PL Costs & Logistics":
                 st.divider()
 
                 # --- SECTION 2: STATES & PROVINCES SUMMARY ---
-                st.markdown(f"#### 📍 {reg_3pl} Cost by State/Province")
+                st.markdown(f"#### 📍 {reg_3pl} Cost by State/Province/Country")
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
                 
-                # Slicing ranges based exactly on the Google Sheet structure
                 if reg_3pl == "🇺🇸 US":
-                    # Row A2 to A51 = index 0 to 49 in pandas
                     df_slice = df_states_raw.iloc[0:50].copy()
                 elif reg_3pl == "🇨🇦 CA":
-                    # Row A2 to A14 = index 0 to 12
                     df_slice = df_states_raw.iloc[0:13].copy()
+                elif reg_3pl == "🇪🇺 EU":
+                    df_slice = df_states_raw.iloc[0:29].copy()
                 else:
                     df_slice = df_states_raw.copy()
                 
-                # Assuming Column A (0) is State, Column B (1) is Cost
                 df_slice[1] = df_slice[1].astype(str).str.replace(r'[$, ]', '', regex=True)
                 df_slice[1] = pd.to_numeric(df_slice[1], errors='coerce').fillna(0)
                 
-                # Filter only where cost is greater than 0
                 df_filtered = df_slice[df_slice[1] > 0][[0, 1]]
-                df_filtered.columns = ["State / Province", "Shipping Cost"]
+                df_filtered.columns = ["Location", "Shipping Cost"]
                 
-                # Sort from most expensive to least
                 df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                 
-                # Add dollar signs for display
                 df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].map("${:,.2f}".format)
                 
                 st.dataframe(df_filtered, hide_index=True, use_container_width=True)
