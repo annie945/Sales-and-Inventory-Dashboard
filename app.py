@@ -72,9 +72,14 @@ def normalize_loc(s, reg):
             'ro':'romania', 'hu':'hungary', 'bg':'bulgaria', 'sk':'slovakia', 'hr':'croatia', 
             'si':'slovenia', 'ee':'estonia', 'lv':'latvia', 'lt':'lithuania', 'cy':'cyprus', 
             'mt':'malta', 'lu':'luxembourg', 'ch':'switzerland', 'no':'norway', 
-            'gb':'united kingdom', 'uk':'united kingdom'
+            'gb':'united kingdom', 'uk':'united kingdom', 'fra':'france', 'deu':'germany',
+            'ita':'italy', 'esp':'spain', 'nld':'netherlands', 'gbr':'united kingdom'
         }
-        return eu_map.get(s, s)
+        if s in eu_map: return eu_map[s]
+        for code, name in eu_map.items():
+            if name in s: return name # Catches strings like "FR - France"
+        return s
+        
     elif reg == "🇺🇸 US":
         us_map = {
             'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 
@@ -90,6 +95,7 @@ def normalize_loc(s, reg):
             'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming'
         }
         return us_map.get(s, s)
+        
     elif reg == "🇨🇦 CA":
         ca_map = {
             'ab':'alberta', 'bc':'british columbia', 'mb':'manitoba', 'nb':'new brunswick', 
@@ -433,12 +439,9 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
                 
-                if reg_3pl == "🇺🇸 US": df_slice = df_states_raw.iloc[1:51].copy()
-                elif reg_3pl == "🇨🇦 CA": df_slice = df_states_raw.iloc[1:14].copy()
-                elif reg_3pl == "🇪🇺 EU": df_slice = df_states_raw.iloc[1:30].copy()
-                else: df_slice = df_states_raw.copy()
+                # Dynamic row read - completely removes the old 1:30 cutoff!
+                df_slice = df_states_raw.iloc[1:].copy()
                 
-                # Set dynamic month column
                 month_col_idx = curr_m_raw if 'curr_m_raw' in locals() else (global_curr_m if 'global_curr_m' in locals() else 1)
                 if month_col_idx >= df_slice.shape[1]: month_col_idx = df_slice.shape[1] - 1
                 
@@ -446,7 +449,9 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_filtered = df_slice[df_slice[month_col_idx] > 0][[0, month_col_idx]].copy()
                 df_filtered.columns = ["Location", "Shipping Cost"]
                 
-                # Create a matchable format of the locations
+                # Safe-filter to remove "Total" rows
+                df_filtered = df_filtered[~df_filtered["Location"].astype(str).str.lower().str.contains("total", na=False)]
+                
                 df_filtered["Match_Loc"] = df_filtered["Location"].apply(lambda x: normalize_loc(x, reg_3pl))
 
                 # --- 2. LOAD RAW DATA & CALCULATE METRICS ---
@@ -480,13 +485,11 @@ elif page == "🚚 3PL Costs & Logistics":
                             if reg_3pl == "🇪🇺 EU":
                                 order_col, carrier_col = 12, 15 # Cols M, P
                                 
-                                # EU Average Calculation (picking row logic, Charge Type in Col G/6)
                                 mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_curr = pd.to_numeric(df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_prev = pd.to_numeric(df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 
-                                # EU Location Counts (shipping row logic, Charge Type in Col G/6, Country in Col O/14)
                                 mask_ship_curr = df_raw_recent[6].astype(str).str.lower().str.contains('shipping', na=False)
                                 df_eu_loc = df_raw_recent[mask_ship_curr].copy()
                                 df_eu_loc['Match_Loc'] = df_eu_loc[14].apply(lambda x: normalize_loc(x, reg_3pl))
@@ -494,16 +497,13 @@ elif page == "🚚 3PL Costs & Logistics":
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
                                 
                             else: 
-                                # US/CA Logic
                                 order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
                                 
-                                # US/CA Average Calculation
                                 df_unique_curr = df_raw_recent.drop_duplicates(subset=[order_col])
                                 total_items_curr = pd.to_numeric(df_unique_curr[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
                                 df_unique_prev = df_raw_prev.drop_duplicates(subset=[order_col])
                                 total_items_prev = pd.to_numeric(df_unique_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
 
-                                # US/CA Location Counts (Regex Extract from Col E/4)
                                 df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
                                 loc_counts = df_raw_recent.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
@@ -558,29 +558,61 @@ elif page == "🚚 3PL Costs & Logistics":
                                     disp_counts = c_counts.copy()
                                     disp_counts['Percentage'] = disp_counts['Percentage'].map("{:.1f}%".format)
                                     st.dataframe(disp_counts[['Carrier', 'Percentage']], hide_index=True, use_container_width=True)
+                            
+                            # --- 3. FINAL LOCATION TABLE BUILDER ---
+                            st.divider()
+                            st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
+                            
+                            if not df_filtered.empty:
+                                if not loc_counts.empty:
+                                    df_filtered = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left')
+                                    df_filtered['Total Orders'] = df_filtered['Total Orders'].fillna(0).astype(int)
+                                else:
+                                    df_filtered['Total Orders'] = 0
+                                    st.info("ℹ️ Note: Could not calculate Order Counts from raw data.")
+                                
+                                df_filtered = df_filtered[["Location", "Total Orders", "Shipping Cost"]]
+                                df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
+                                df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}")
+                                st.dataframe(df_filtered, hide_index=True, use_container_width=True)
+                            else:
+                                st.warning("⚠️ No valid costs found for the current month in Summary data.")
+                                
+                            # --- 4. YTD TOP 3 DESTINATIONS ---
+                            st.divider()
+                            st.markdown(f"#### 🏆 YTD {curr_y_raw} Top 3 Destinations (Order Volume %)")
+                            
+                            df_raw_ytd = df_raw_valid[df_raw_valid['ParsedDate'].dt.year == curr_y_raw].copy()
+                            if not df_raw_ytd.empty:
+                                if reg_3pl == "🇪🇺 EU":
+                                    mask_ship_ytd = df_raw_ytd[6].astype(str).str.lower().str.contains('shipping', na=False)
+                                    df_loc_ytd = df_raw_ytd[mask_ship_ytd].copy()
+                                    df_loc_ytd['Match_Loc'] = df_loc_ytd[14].apply(lambda x: normalize_loc(x, reg_3pl))
+                                else:
+                                    df_loc_ytd = df_raw_ytd.copy()
+                                    df_loc_ytd['Match_Loc'] = df_loc_ytd[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
+                                
+                                ytd_loc_counts = df_loc_ytd.groupby('Match_Loc')[order_col].nunique().reset_index()
+                                ytd_loc_counts.columns = ['Location', 'YTD Orders']
+                                total_ytd_orders = ytd_loc_counts['YTD Orders'].sum()
+                                
+                                if total_ytd_orders > 0:
+                                    ytd_loc_counts['Percentage'] = (ytd_loc_counts['YTD Orders'] / total_ytd_orders) * 100
+                                    top3_ytd = ytd_loc_counts.nlargest(3, 'YTD Orders').copy()
+                                    
+                                    top3_ytd['Location'] = top3_ytd['Location'].astype(str).str.title()
+                                    top3_ytd['Location'] = top3_ytd['Location'].apply(lambda x: x.upper() if len(x) == 2 else x)
+                                    top3_ytd['Percentage'] = top3_ytd['Percentage'].map("{:.1f}%".format)
+                                    
+                                    st.dataframe(top3_ytd, hide_index=True, use_container_width=True)
+                                else:
+                                    st.info("No YTD order data available for locations.")
+                            else:
+                                st.info("No YTD data available.")
+                                
                         else:
                             st.info("⚠️ Could not find real dates in raw data to filter by month.")
                 
-                st.divider()
-                
-                # --- 3. FINAL LOCATION TABLE BUILDER ---
-                st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
-                
-                if not df_filtered.empty:
-                    if not loc_counts.empty:
-                        df_filtered = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left')
-                        df_filtered['Total Orders'] = df_filtered['Total Orders'].fillna(0).astype(int)
-                    else:
-                        df_filtered['Total Orders'] = 0
-                        st.info("ℹ️ Note: Could not calculate Order Counts from raw data.")
-                    
-                    df_filtered = df_filtered[["Location", "Total Orders", "Shipping Cost"]]
-                    df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
-                    df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}")
-                    st.dataframe(df_filtered, hide_index=True, use_container_width=True)
-                else:
-                    st.warning("⚠️ No valid costs found for the current month in Summary data.")
-                    
             except Exception as e:
                 st.error(f"Error loading Shipping Analysis: {e}")
 
