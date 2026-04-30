@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import altair as alt
+import re
 
 # 1. Setup & Styling
 st.set_page_config(layout="wide", page_title="Global Inventory & Risk")
@@ -32,7 +33,6 @@ GID_PO_GRID = "1801670245"
 THREE_PL_SHEET_ID = "1UzHDyqkj1fvGYOXk8e_iOSWYsIofHB7id0hjEaX7Rm4"
 GID_3PL_SUMMARY = "972554877" 
 
-# Column mappings (0-indexed: A=0, B=1, C=2...)
 SUMMARY_COLS = {
     "🇺🇸 US": {"fulfill": 1, "shipping": 2, "storage": 3},
     "🇨🇦 CA": {"fulfill": 4, "shipping": 5, "storage": 6},
@@ -52,7 +52,6 @@ GIDS_RAW_SHIPPING = {
     "🇪🇺 EU": "1062524574"
 }
 
-# --- REGION RANGES FOR SAFETY STOCK ---
 REGION_RANGES = {
     "Shopify/WH": {"🇺🇸 US": (1, 21), "🇨🇦 CA": (22, 42), "🇬🇧 UK": (44, 64), "🇪🇺 EU": (66, 86), "🇦🇺 AU": (88, 108)},
     "Amazon (FBA)": {"🇺🇸 US": (110, 130), "🇨🇦 CA": (131, 151)}
@@ -62,20 +61,40 @@ CAMS_PREFIX = ["MA-","MC-","MK-","MP-","MV-"]
 MP2_CAMS = ["MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP"]
 ACCS_KEYWORDS = ["MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"]
 
-# US State Abbreviations to match Raw Data
-US_STATES = {
-    'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 
-    'co':'colorado', 'ct':'connecticut', 'de':'delaware', 'fl':'florida', 'ga':'georgia', 
-    'hi':'hawaii', 'id':'idaho', 'il':'illinois', 'in':'indiana', 'ia':'iowa', 
-    'ks':'kansas', 'ky':'kentucky', 'la':'louisiana', 'me':'maine', 'md':'maryland', 
-    'ma':'massachusetts', 'mi':'michigan', 'mn':'minnesota', 'ms':'mississippi', 
-    'mo':'missouri', 'mt':'montana', 'ne':'nebraska', 'nv':'nevada', 'nh':'new hampshire', 
-    'nj':'new jersey', 'nm':'new mexico', 'ny':'new york', 'nc':'north carolina', 
-    'nd':'north dakota', 'oh':'ohio', 'ok':'oklahoma', 'or':'oregon', 'pa':'pennsylvania', 
-    'ri':'rhode island', 'sc':'south carolina', 'sd':'south dakota', 'tn':'tennessee', 
-    'tx':'texas', 'ut':'utah', 'vt':'vermont', 'va':'virginia', 'wa':'washington', 
-    'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming'
-}
+# --- UNIVERSAL LOCATION TRANSLATOR ---
+def normalize_loc(s):
+    s = str(s).lower().strip()
+    mapping = { 
+        'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 
+        'co':'colorado', 'ct':'connecticut', 'de':'delaware', 'fl':'florida', 'ga':'georgia', 
+        'hi':'hawaii', 'id':'idaho', 'il':'illinois', 'in':'indiana', 'ia':'iowa', 
+        'ks':'kansas', 'ky':'kentucky', 'la':'louisiana', 'me':'maine', 'md':'maryland', 
+        'ma':'massachusetts', 'mi':'michigan', 'mn':'minnesota', 'ms':'mississippi', 
+        'mo':'missouri', 'mt':'montana', 'ne':'nebraska', 'nv':'nevada', 'nh':'new hampshire', 
+        'nj':'new jersey', 'nm':'new mexico', 'ny':'new york', 'nc':'north carolina', 
+        'nd':'north dakota', 'oh':'ohio', 'ok':'oklahoma', 'or':'oregon', 'pa':'pennsylvania', 
+        'ri':'rhode island', 'sc':'south carolina', 'sd':'south dakota', 'tn':'tennessee', 
+        'tx':'texas', 'ut':'utah', 'vt':'vermont', 'va':'virginia', 'wa':'washington', 
+        'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming',
+        'ab':'alberta', 'bc':'british columbia', 'mb':'manitoba', 'nb':'new brunswick', 
+        'nl':'newfoundland and labrador', 'ns':'nova scotia', 'nt':'northwest territories', 
+        'nu':'nunavut', 'on':'ontario', 'pe':'prince edward island', 'qc':'quebec', 
+        'sk':'saskatchewan', 'yt':'yukon' 
+    }
+    return mapping.get(s, s)
+
+# --- REGEX STATE EXTRACTOR ---
+def extract_state(val):
+    v = str(val).upper()
+    # Looks for any exact 2-letter state/province code hiding in the text
+    match = re.search(r'\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b', v)
+    if match: return match.group(1).lower()
+    
+    # Fallback if no exact 2-letter code is found
+    if ',' in v: 
+        cleaned = v.split(',')[-1].strip()
+        return cleaned.split()[0].lower() if cleaned else v.lower()
+    return v.split()[-1].lower() if ' ' in v else v.lower()
 
 @st.cache_data(ttl=300)
 def load_csv(sheet_id, gid):
@@ -156,7 +175,6 @@ if page == "📦 Inventory & Risk":
             risk_inv.columns = ["SKU", "Stock"]
             risk_inv["Stock"] = pd.to_numeric(risk_inv["Stock"], errors='coerce').fillna(0).astype(int)
 
-            # HISTORICALLY STABLE DUPLICATE COMBINER
             demand_dict = {}
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip().upper()
@@ -353,7 +371,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
                 
                 curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
-                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
+                prev_storage = df_prev[st_col].sum() if st_col < df_curr.shape[1] else 0
                 
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Storage Cost", f"{cur}{curr_storage:,.2f}", delta=f"{cur}{curr_storage - prev_storage:,.2f}", delta_color="inverse")
@@ -409,9 +427,12 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_filtered = df_slice[df_slice[month_col_idx] > 0][[0, month_col_idx]].copy()
                 df_filtered.columns = ["Location", "Shipping Cost"]
                 
+                # Create a matchable format of the locations
+                df_filtered["Match_Loc"] = df_filtered["Location"].apply(normalize_loc)
+
                 # --- 2. LOAD RAW DATA & CALCULATE METRICS ---
                 raw_gid = GIDS_RAW_SHIPPING.get(reg_3pl, "")
-                df_raw_recent = pd.DataFrame()
+                loc_counts = pd.DataFrame()
                 
                 if raw_gid:
                     df_raw = load_csv(THREE_PL_SHEET_ID, raw_gid)
@@ -433,35 +454,47 @@ elif page == "🚚 3PL Costs & Logistics":
                             curr_m_raw, curr_y_raw = recent_date.month, recent_date.year
                             prev_m_raw, prev_y_raw = (12, curr_y_raw - 1) if curr_m_raw == 1 else (curr_m_raw - 1, curr_y_raw)
                             
-                            df_raw_recent = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == curr_m_raw) & (df_raw_valid['ParsedDate'].dt.year == curr_y_raw)]
-                            df_raw_prev = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == prev_m_raw) & (df_raw_valid['ParsedDate'].dt.year == prev_y_raw)]
+                            df_raw_recent = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == curr_m_raw) & (df_raw_valid['ParsedDate'].dt.year == curr_y_raw)].copy()
+                            df_raw_prev = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == prev_m_raw) & (df_raw_valid['ParsedDate'].dt.year == prev_y_raw)].copy()
                             
-                            # EXACT COLUMN SELECTION PER REGION
+                            # --- REGION SPECIFIC HARDCODED LOGIC ---
                             if reg_3pl == "🇪🇺 EU":
                                 order_col, carrier_col = 12, 15 # Cols M, P
                                 
+                                # EU Average Calculation (picking row logic)
                                 mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_curr = pd.to_numeric(df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
-                                
                                 mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_prev = pd.to_numeric(df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 
-                            else: # US/CA
+                                # EU Location Counts (shipping row logic, Country in Col N/13)
+                                mask_ship_curr = df_raw_recent[5].astype(str).str.lower().str.contains('shipping', na=False)
+                                df_eu_loc = df_raw_recent[mask_ship_curr].copy()
+                                df_eu_loc['Match_Loc'] = df_eu_loc[13].apply(normalize_loc)
+                                loc_counts = df_eu_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
+                                loc_counts.columns = ['Match_Loc', 'Total Orders']
+                                
+                            else: 
+                                # US/CA Logic
                                 order_col, size_col, carrier_col = 2, 11, 6 # Cols C, L, G
                                 
+                                # US/CA Average Calculation
                                 df_unique_curr = df_raw_recent.drop_duplicates(subset=[order_col])
                                 total_items_curr = pd.to_numeric(df_unique_curr[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
-                                
                                 df_unique_prev = df_raw_prev.drop_duplicates(subset=[order_col])
                                 total_items_prev = pd.to_numeric(df_unique_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
 
-                            # STRICT UNIQUE ORDERS
+                                # US/CA Location Counts (Regex Extract from Col E/4)
+                                df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(normalize_loc)
+                                loc_counts = df_raw_recent.groupby('Match_Loc')[order_col].nunique().reset_index()
+                                loc_counts.columns = ['Match_Loc', 'Total Orders']
+
+                            # --- TOP METRICS CALCULATION ---
                             total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
                             prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().nunique()
                             
                             df_carrier_source = df_raw_recent.drop_duplicates(subset=[order_col])
                             
-                            # AVERAGES
                             if reg_3pl == "🇪🇺 EU":
                                 avg_order_size = total_items_curr / total_orders if total_orders > 0 else 0
                                 prev_avg_order_size = total_items_prev / prev_total_orders if prev_total_orders > 0 else 0
@@ -476,7 +509,6 @@ elif page == "🚚 3PL Costs & Logistics":
                             delta_orders = int(total_orders - prev_total_orders)
                             delta_size = float(avg_order_size - prev_avg_order_size)
                             
-                            # Display Top Metrics
                             display_month_str = recent_date.strftime('%B %Y')
                             st.markdown(f"#### 📊 Order Metrics ({display_month_str})")
                             
@@ -484,7 +516,7 @@ elif page == "🚚 3PL Costs & Logistics":
                             col1.metric("📦 Orders Shipped", f"{int(total_orders):,}", delta=delta_orders)
                             col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}", delta=f"{delta_size:,.2f}")
                             
-                            # Carrier Pie Chart
+                            # --- CARRIER USAGE ---
                             st.divider()
                             st.markdown(f"#### 🚚 Carrier Usage ({display_month_str})")
                             
@@ -515,48 +547,14 @@ elif page == "🚚 3PL Costs & Logistics":
                 # --- 3. FINAL LOCATION TABLE BUILDER ---
                 st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
                 
-                df_filtered["Total Orders"] = 0 # Default safety
-                
-                if not df_filtered.empty and not df_raw_recent.empty:
-                    target_locs = df_filtered["Location"].astype(str).str.lower().str.strip().tolist()
-                    
-                    best_col = None
-                    max_matches = 0
-                    us_rev_map = {v.lower():k.lower() for k,v in US_STATES.items()}
-                    
-                    # Safe column scanner
-                    for c in df_raw_recent.columns:
-                        if order_col not in df_raw_recent.columns: break
-                        raw_vals = df_raw_recent[c].astype(str).str.lower().str.strip()
-                        
-                        m_count = raw_vals.isin(target_locs).sum()
-                        
-                        if reg_3pl == "🇺🇸 US" and m_count == 0:
-                            mapped_targets = [us_rev_map.get(l, l) for l in target_locs]
-                            m_count = raw_vals.isin(mapped_targets).sum()
-                            
-                        if m_count > max_matches:
-                            max_matches = m_count
-                            best_col = c
-                            
-                    if best_col is not None:
-                        grouped = df_raw_recent.groupby(best_col)[order_col].nunique().to_dict()
-                        
-                        def get_orders(loc):
-                            l_low = str(loc).lower().strip()
-                            for k, v in grouped.items():
-                                if str(k).lower().strip() == l_low: return v
-                            if reg_3pl == "🇺🇸 US":
-                                abbr = us_rev_map.get(l_low, l_low)
-                                for k, v in grouped.items():
-                                    if str(k).lower().strip() == abbr: return v
-                            return 0
-                            
-                        df_filtered["Total Orders"] = df_filtered["Location"].apply(get_orders)
-                    else:
-                        st.info("ℹ️ Could not find a matching location column in the raw data to count orders.")
-                
                 if not df_filtered.empty:
+                    if not loc_counts.empty:
+                        df_filtered = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left')
+                        df_filtered['Total Orders'] = df_filtered['Total Orders'].fillna(0).astype(int)
+                    else:
+                        df_filtered['Total Orders'] = 0
+                        st.info("ℹ️ Note: Could not calculate Order Counts from raw data.")
+                    
                     df_filtered = df_filtered[["Location", "Total Orders", "Shipping Cost"]]
                     df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                     df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}")
