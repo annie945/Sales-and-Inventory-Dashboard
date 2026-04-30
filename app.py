@@ -63,7 +63,10 @@ ACCS_KEYWORDS = ["MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"]
 
 # --- UNIVERSAL LOCATION TRANSLATOR ---
 def normalize_loc(s, reg):
+    if pd.isna(s): return ""
     s = str(s).lower().strip()
+    if s == 'nan' or s == '': return ""
+    
     if reg == "🇪🇺 EU":
         eu_map = {
             'de':'germany', 'fr':'france', 'it':'italy', 'es':'spain', 'nl':'netherlands', 
@@ -108,9 +111,13 @@ def normalize_loc(s, reg):
 
 # --- REGEX STATE EXTRACTOR ---
 def extract_state(val):
-    v = str(val).upper()
+    if pd.isna(val): return ""
+    v = str(val).upper().strip()
+    if v == 'NAN' or v == '': return ""
+    
     match = re.search(r'\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b', v)
     if match: return match.group(1).lower()
+    
     if ',' in v: 
         cleaned = v.split(',')[-1].strip()
         return cleaned.split()[0].lower() if cleaned else v.lower()
@@ -493,6 +500,8 @@ elif page == "🚚 3PL Costs & Logistics":
                                 mask_ship_curr = df_raw_recent[6].astype(str).str.lower().str.contains('shipping', na=False)
                                 df_eu_loc = df_raw_recent[mask_ship_curr].copy()
                                 df_eu_loc['Match_Loc'] = df_eu_loc[14].apply(lambda x: normalize_loc(x, reg_3pl))
+                                # Drop completely empty locations so NaN isn't counted
+                                df_eu_loc = df_eu_loc[df_eu_loc['Match_Loc'] != ""]
                                 loc_counts = df_eu_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
                                 
@@ -505,7 +514,9 @@ elif page == "🚚 3PL Costs & Logistics":
                                 total_items_prev = pd.to_numeric(df_unique_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
 
                                 df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
-                                loc_counts = df_raw_recent.groupby('Match_Loc')[order_col].nunique().reset_index()
+                                # Drop completely empty locations so NaN isn't counted
+                                df_usca_loc = df_raw_recent[df_raw_recent['Match_Loc'] != ""]
+                                loc_counts = df_usca_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
 
                             # --- TOP METRICS CALCULATION ---
@@ -539,7 +550,8 @@ elif page == "🚚 3PL Costs & Logistics":
                             st.divider()
                             st.markdown(f"#### 🚚 Carrier Usage ({display_month_str})")
                             
-                            carriers = df_carrier_source[carrier_col].replace('', pd.NA).dropna()
+                            # Eliminate empty/NaN carrier names entirely
+                            carriers = df_carrier_source[carrier_col].astype(str).replace(['nan', 'NaN', 'None', ''], pd.NA).dropna()
                             if not carriers.empty:
                                 c_counts = carriers.value_counts().reset_index()
                                 c_counts.columns = ['Carrier', 'Orders']
@@ -591,6 +603,9 @@ elif page == "🚚 3PL Costs & Logistics":
                                 else:
                                     df_loc_ytd = df_raw_ytd.copy()
                                     df_loc_ytd['Match_Loc'] = df_loc_ytd[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
+                                
+                                # Strip out empty 'Match_Loc' rows so NaN won't appear
+                                df_loc_ytd = df_loc_ytd[df_loc_ytd['Match_Loc'] != ""]
                                 
                                 ytd_loc_counts = df_loc_ytd.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 ytd_loc_counts.columns = ['Location', 'YTD Orders']
