@@ -660,6 +660,38 @@ elif page == "🚚 3PL Costs & Logistics":
                                     st.dataframe(top3_ytd, hide_index=True, use_container_width=True)
                                 else:
                                     st.info("No YTD order data available for locations.")
+                                    
+                                # --- 5. YTD REGIONAL DISTRIBUTION PIE CHART (US/CA Only) ---
+                                if reg_3pl in ["🇺🇸 US", "🇨🇦 CA"]:
+                                    st.divider()
+                                    st.markdown(f"#### 🗺️ YTD {curr_y_raw} Regional Distribution")
+                                    
+                                    df_ytd_pie = df_loc_ytd.copy()
+                                    if reg_3pl == "🇺🇸 US":
+                                        df_ytd_pie['Macro_Region'] = df_ytd_pie['Match_Loc'].map(US_MACRO).fillna('Unknown')
+                                    else:
+                                        df_ytd_pie['Macro_Region'] = df_ytd_pie['Match_Loc'].map(CA_MACRO).fillna('Unknown')
+                                    
+                                    df_ytd_pie = df_ytd_pie[df_ytd_pie['Macro_Region'] != 'Unknown']
+                                    
+                                    if not df_ytd_pie.empty:
+                                        ytd_reg_counts = df_ytd_pie.groupby('Macro_Region')[order_col].nunique().reset_index()
+                                        ytd_reg_counts.columns = ['Region', 'Orders']
+                                        ytd_reg_counts['Percentage'] = (ytd_reg_counts['Orders'] / ytd_reg_counts['Orders'].sum()) * 100
+                                        
+                                        chart_col_ytd_reg, table_col_ytd_reg = st.columns([1, 1])
+                                        with chart_col_ytd_reg:
+                                            pie_ytd_reg = alt.Chart(ytd_reg_counts).mark_arc(innerRadius=50).encode(
+                                                theta=alt.Theta(field="Orders", type="quantitative"),
+                                                color=alt.Color(field="Region", type="nominal"),
+                                                tooltip=['Region', alt.Tooltip('Percentage', format='.1f')]
+                                            ).properties(height=350)
+                                            st.altair_chart(pie_ytd_reg, use_container_width=True)
+                                        with table_col_ytd_reg:
+                                            disp_ytd_reg = ytd_reg_counts.copy()
+                                            disp_ytd_reg['Percentage'] = disp_ytd_reg['Percentage'].map("{:.1f}%".format)
+                                            st.dataframe(disp_ytd_reg[['Region', 'Percentage']], hide_index=True, use_container_width=True)
+                                            
                             else:
                                 st.info("No YTD data available.")
                                 
