@@ -62,35 +62,49 @@ MP2_CAMS = ["MP2-BLUE", "MP2-MINT", "MP2-SP", "MP2-WP"]
 ACCS_KEYWORDS = ["MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"]
 
 # --- UNIVERSAL LOCATION TRANSLATOR ---
-def normalize_loc(s):
+def normalize_loc(s, reg):
     s = str(s).lower().strip()
-    mapping = { 
-        'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 
-        'co':'colorado', 'ct':'connecticut', 'de':'delaware', 'fl':'florida', 'ga':'georgia', 
-        'hi':'hawaii', 'id':'idaho', 'il':'illinois', 'in':'indiana', 'ia':'iowa', 
-        'ks':'kansas', 'ky':'kentucky', 'la':'louisiana', 'me':'maine', 'md':'maryland', 
-        'ma':'massachusetts', 'mi':'michigan', 'mn':'minnesota', 'ms':'mississippi', 
-        'mo':'missouri', 'mt':'montana', 'ne':'nebraska', 'nv':'nevada', 'nh':'new hampshire', 
-        'nj':'new jersey', 'nm':'new mexico', 'ny':'new york', 'nc':'north carolina', 
-        'nd':'north dakota', 'oh':'ohio', 'ok':'oklahoma', 'or':'oregon', 'pa':'pennsylvania', 
-        'ri':'rhode island', 'sc':'south carolina', 'sd':'south dakota', 'tn':'tennessee', 
-        'tx':'texas', 'ut':'utah', 'vt':'vermont', 'va':'virginia', 'wa':'washington', 
-        'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming',
-        'ab':'alberta', 'bc':'british columbia', 'mb':'manitoba', 'nb':'new brunswick', 
-        'nl':'newfoundland and labrador', 'ns':'nova scotia', 'nt':'northwest territories', 
-        'nu':'nunavut', 'on':'ontario', 'pe':'prince edward island', 'qc':'quebec', 
-        'sk':'saskatchewan', 'yt':'yukon' 
-    }
-    return mapping.get(s, s)
+    if reg == "🇪🇺 EU":
+        eu_map = {
+            'de':'germany', 'fr':'france', 'it':'italy', 'es':'spain', 'nl':'netherlands', 
+            'be':'belgium', 'at':'austria', 'pl':'poland', 'se':'sweden', 'dk':'denmark', 
+            'fi':'finland', 'pt':'portugal', 'ie':'ireland', 'gr':'greece', 'cz':'czech republic', 
+            'ro':'romania', 'hu':'hungary', 'bg':'bulgaria', 'sk':'slovakia', 'hr':'croatia', 
+            'si':'slovenia', 'ee':'estonia', 'lv':'latvia', 'lt':'lithuania', 'cy':'cyprus', 
+            'mt':'malta', 'lu':'luxembourg', 'ch':'switzerland', 'no':'norway', 
+            'gb':'united kingdom', 'uk':'united kingdom'
+        }
+        return eu_map.get(s, s)
+    elif reg == "🇺🇸 US":
+        us_map = {
+            'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 
+            'co':'colorado', 'ct':'connecticut', 'de':'delaware', 'fl':'florida', 'ga':'georgia', 
+            'hi':'hawaii', 'id':'idaho', 'il':'illinois', 'in':'indiana', 'ia':'iowa', 
+            'ks':'kansas', 'ky':'kentucky', 'la':'louisiana', 'me':'maine', 'md':'maryland', 
+            'ma':'massachusetts', 'mi':'michigan', 'mn':'minnesota', 'ms':'mississippi', 
+            'mo':'missouri', 'mt':'montana', 'ne':'nebraska', 'nv':'nevada', 'nh':'new hampshire', 
+            'nj':'new jersey', 'nm':'new mexico', 'ny':'new york', 'nc':'north carolina', 
+            'nd':'north dakota', 'oh':'ohio', 'ok':'oklahoma', 'or':'oregon', 'pa':'pennsylvania', 
+            'ri':'rhode island', 'sc':'south carolina', 'sd':'south dakota', 'tn':'tennessee', 
+            'tx':'texas', 'ut':'utah', 'vt':'vermont', 'va':'virginia', 'wa':'washington', 
+            'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming'
+        }
+        return us_map.get(s, s)
+    elif reg == "🇨🇦 CA":
+        ca_map = {
+            'ab':'alberta', 'bc':'british columbia', 'mb':'manitoba', 'nb':'new brunswick', 
+            'nl':'newfoundland and labrador', 'ns':'nova scotia', 'nt':'northwest territories', 
+            'nu':'nunavut', 'on':'ontario', 'pe':'prince edward island', 'qc':'quebec', 
+            'sk':'saskatchewan', 'yt':'yukon'
+        }
+        return ca_map.get(s, s)
+    return s
 
 # --- REGEX STATE EXTRACTOR ---
 def extract_state(val):
     v = str(val).upper()
-    # Looks for any exact 2-letter state/province code hiding in the text
     match = re.search(r'\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b', v)
     if match: return match.group(1).lower()
-    
-    # Fallback if no exact 2-letter code is found
     if ',' in v: 
         cleaned = v.split(',')[-1].strip()
         return cleaned.split()[0].lower() if cleaned else v.lower()
@@ -164,10 +178,19 @@ if page == "📦 Inventory & Risk":
             f_df = load_csv(FORECAST_SHEET_ID, GIDS_FOR_MONTHS[chan][m_sel])
             f_df.columns = [str(c).strip() for c in f_df.columns]
             
-            target_months = []
-            for i in range(3):
-                date_val = (datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1)
-                target_months.append(date_val.strftime('%Y-%m-01'))
+            target_dates = [(datetime.now().replace(day=1) + timedelta(days=31*i)).replace(day=1) for i in range(3)]
+            target_ym = [(d.year, d.month) for d in target_dates]
+            
+            demand_cols = []
+            for c in f_df.columns:
+                try:
+                    dt = pd.to_datetime(str(c).strip())
+                    if (dt.year, dt.month) in target_ym: demand_cols.append(c)
+                except: pass
+            
+            if not demand_cols:
+                target_strs = [d.strftime('%Y-%m-01') for d in target_dates]
+                demand_cols = [c for c in f_df.columns if str(c).strip() in target_strs]
             
             inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
             df_inv_risk = load_csv(MAIN_SHEET_ID, inv_gid)
@@ -179,12 +202,8 @@ if page == "📦 Inventory & Risk":
             for _, row in f_df.iterrows():
                 sku = str(row.iloc[0]).strip().upper()
                 if not is_valid_sku(sku): continue
-                demand = 0
-                for m in target_months:
-                    if m in f_df.columns:
-                        val = pd.to_numeric(row[m], errors='coerce')
-                        if pd.notna(val): demand += val
-                demand_dict[sku] = demand_dict.get(sku, 0) + demand
+                row_demand = sum([pd.to_numeric(row[m], errors='coerce') for m in demand_cols])
+                demand_dict[sku] = demand_dict.get(sku, 0) + row_demand
 
             risk_list = []
             for sku, demand in demand_dict.items():
@@ -428,7 +447,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_filtered.columns = ["Location", "Shipping Cost"]
                 
                 # Create a matchable format of the locations
-                df_filtered["Match_Loc"] = df_filtered["Location"].apply(normalize_loc)
+                df_filtered["Match_Loc"] = df_filtered["Location"].apply(lambda x: normalize_loc(x, reg_3pl))
 
                 # --- 2. LOAD RAW DATA & CALCULATE METRICS ---
                 raw_gid = GIDS_RAW_SHIPPING.get(reg_3pl, "")
@@ -461,16 +480,16 @@ elif page == "🚚 3PL Costs & Logistics":
                             if reg_3pl == "🇪🇺 EU":
                                 order_col, carrier_col = 12, 15 # Cols M, P
                                 
-                                # EU Average Calculation (picking row logic)
+                                # EU Average Calculation (picking row logic, Charge Type in Col G/6)
                                 mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_curr = pd.to_numeric(df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_prev = pd.to_numeric(df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 
-                                # EU Location Counts (shipping row logic, Country in Col N/13)
-                                mask_ship_curr = df_raw_recent[5].astype(str).str.lower().str.contains('shipping', na=False)
+                                # EU Location Counts (shipping row logic, Charge Type in Col G/6, Country in Col O/14)
+                                mask_ship_curr = df_raw_recent[6].astype(str).str.lower().str.contains('shipping', na=False)
                                 df_eu_loc = df_raw_recent[mask_ship_curr].copy()
-                                df_eu_loc['Match_Loc'] = df_eu_loc[13].apply(normalize_loc)
+                                df_eu_loc['Match_Loc'] = df_eu_loc[14].apply(lambda x: normalize_loc(x, reg_3pl))
                                 loc_counts = df_eu_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
                                 
@@ -485,7 +504,7 @@ elif page == "🚚 3PL Costs & Logistics":
                                 total_items_prev = pd.to_numeric(df_unique_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
 
                                 # US/CA Location Counts (Regex Extract from Col E/4)
-                                df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(normalize_loc)
+                                df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
                                 loc_counts = df_raw_recent.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
 
