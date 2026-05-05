@@ -29,7 +29,7 @@ GIDS_FOR_MONTHS = {
 GID_SAFETY_SOURCE = "2100066410"
 GID_PO_GRID = "1801670245" 
 
-# --- NEW 3PL DATA GIDS & MAPPINGS ---
+# --- 3PL DATA GIDS ---
 THREE_PL_SHEET_ID = "1UzHDyqkj1fvGYOXk8e_iOSWYsIofHB7id0hjEaX7Rm4"
 GID_3PL_SUMMARY = "972554877" 
 
@@ -165,19 +165,37 @@ def is_cam(s):
 def get_filtered_po_data(channel, region_label):
     try:
         df_po = load_csv(PO_MASTER_SHEET_ID, GID_PO_GRID)
-        df_po.columns = range(df_po.shape[1])
-        df_po = df_po[df_po[11].astype(str).str.upper() != "RECEIVED"]
+        # Using row 0 as header to find column indices
+        df_po.columns = [str(c).strip().upper() for c in df_po.columns]
+        
+        # Determine status column (usually last)
+        status_col = df_po.columns[-1]
+        df_po = df_po[df_po[status_col].astype(str).str.upper() != "RECEIVED"]
         
         region_map = {"🇺🇸 US": ["US"], "🇨🇦 CA": ["CA"], "🇬🇧 UK": ["UK"], "🇦🇺 AU": ["AU"], "🇪🇺 EU": ["EU", "GERMANY"]}
         keywords = region_map.get(region_label, [])
-        is_amz = df_po[4].astype(str).str.contains("AMZ", case=False, na=False)
         
-        if channel == "Amazon (FBA)": df_po = df_po[is_amz]
-        else: df_po = df_po[~is_amz]
+        dest_col = "DESTINATION" if "DESTINATION" in df_po.columns else df_po.columns[4]
+        is_amz = df_po[dest_col].astype(str).str.contains("AMZ", case=False, na=False)
+        
+        if channel == "Amazon (FBA)":
+            df_po = df_po[is_amz]
+        else:
+            df_po = df_po[~is_amz]
             
         pattern = '|'.join(keywords)
-        df_po = df_po[df_po[4].astype(str).str.contains(pattern, case=False, na=False)]
-        return df_po[[0, 5, 6, 9, 10]].rename(columns={0:'PO', 5:'SKU', 6:'Qty', 9:'ETA', 10:'Tracking'})
+        df_po = df_po[df_po[dest_col].astype(str).str.contains(pattern, case=False, na=False)]
+        
+        # Dynamically find shifted columns
+        col_po = "PO NUMBER" if "PO NUMBER" in df_po.columns else df_po.columns[0]
+        col_sku = "SKU" if "SKU" in df_po.columns else df_po.columns[5]
+        col_qty = "SHIPPED QTY" if "SHIPPED QTY" in df_po.columns else df_po.columns[7]
+        col_eta = "ETA" if "ETA" in df_po.columns else df_po.columns[9]
+        col_track = "TRACKING" if "TRACKING" in df_po.columns else df_po.columns[10]
+        
+        return df_po[[col_po, col_sku, col_qty, col_eta, col_track]].rename(
+            columns={col_po:'PO', col_sku:'SKU', col_qty:'Qty', col_eta:'ETA', col_track:'Tracking'}
+        )
     except Exception as e: 
         return pd.DataFrame()
 
@@ -344,10 +362,9 @@ elif page == "💰 Sales Performance":
     except Exception as e: 
         st.error(f"Error: {e}")
 
-# --- NEW ADDITION: 3PL COSTS & LOGISTICS ---
+# --- 3PL COSTS & LOGISTICS ---
 elif page == "🚚 3PL Costs & Logistics":
     st.title("🚚 3PL Costs & Logistics Analytics")
-    
     reg_3pl = st.sidebar.selectbox("Select Region for 3PL Data", list(SUMMARY_COLS.keys()))
     has_shipping_data = reg_3pl in GIDS_3PL_SHIPPING
     cur = "€" if reg_3pl == "🇪🇺 EU" else "$"
@@ -373,114 +390,81 @@ elif page == "🚚 3PL Costs & Logistics":
         t_sum = st.container()
         st.info(f"ℹ️ {reg_3pl} only contains Summary data.")
 
-    # ==========================================
     # TAB 1: SUMMARY COSTS 
-    # ==========================================
     with t_sum:
         try:
             df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
             df_sum.columns = range(df_sum.shape[1])
             df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
             df_sum = df_sum.dropna(subset=[0]) 
-            
             cols = SUMMARY_COLS[reg_3pl]
             f_col, s_col, st_col = cols["fulfill"], cols["shipping"], cols["storage"]
-            
             for c in [f_col, s_col, st_col]:
                 if c < df_sum.shape[1]: df_sum[c] = df_sum[c].apply(clean_currency)
-            
             df_sum['YM'] = df_sum[0].dt.to_period('M')
             valid_cols = [c for c in [f_col, s_col, st_col] if c < df_sum.shape[1]]
             monthly_costs = df_sum.groupby('YM')[valid_cols].sum().sum(axis=1)
             valid_months = monthly_costs[monthly_costs > 0]
-            
             global_curr_m = datetime.now().month
-            
             if valid_months.empty:
                 st.warning("⚠️ Could not find any costs greater than 0 in the data.")
             else:
                 most_recent_ym = valid_months.index.max()
                 curr_m, curr_y = most_recent_ym.month, most_recent_ym.year
                 global_curr_m = curr_m 
-                
                 prev_m, prev_y = (12, curr_y - 1) if curr_m == 1 else (curr_m - 1, curr_y)
-                    
                 df_curr = df_sum[(df_sum[0].dt.month == curr_m) & (df_sum[0].dt.year == curr_y)]
                 df_prev = df_sum[(df_sum[0].dt.month == prev_m) & (df_sum[0].dt.year == prev_y)]
-                
                 display_date_str = datetime(curr_y, curr_m, 1).strftime('%B %Y')
                 st.subheader(f"💸 Monthly Cost Overview ({display_date_str})")
-                
                 curr_fulfill = df_curr[f_col].sum() if f_col < df_curr.shape[1] else 0
                 prev_fulfill = df_prev[f_col].sum() if f_col < df_prev.shape[1] else 0
-                
                 curr_shipping = df_curr[s_col].sum() if s_col < df_curr.shape[1] else 0
                 prev_shipping = df_prev[s_col].sum() if s_col < df_prev.shape[1] else 0
-                
                 curr_storage = df_curr[st_col].sum() if st_col < df_curr.shape[1] else 0
-                prev_storage = df_prev[st_col].sum() if st_col < df_curr.shape[1] else 0
-                
+                prev_storage = df_prev[st_col].sum() if st_col < df_prev.shape[1] else 0
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Storage Cost", f"{cur}{curr_storage:,.2f}", delta=f"{cur}{curr_storage - prev_storage:,.2f}", delta_color="inverse")
                 c2.metric("Fulfillment Cost", f"{cur}{curr_fulfill:,.2f}", delta=f"{cur}{curr_fulfill - prev_fulfill:,.2f}", delta_color="inverse")
                 c3.metric("Total Shipping Cost", f"{cur}{curr_shipping:,.2f}", delta=f"{cur}{curr_shipping - prev_shipping:,.2f}", delta_color="inverse")
-
                 st.divider()
                 st.subheader("📋 Monthly Cost Breakdown")
-                
                 trend_df = df_sum[[0, f_col, s_col, st_col]].copy()
                 trend_df = trend_df.rename(columns={0: 'Date', f_col: 'Fulfillment Cost', s_col: 'Shipping Cost', st_col: 'Storage Cost'})
                 trend_df['MonthPeriod'] = trend_df['Date'].dt.to_period('M')
-                
                 monthly_trend = trend_df.groupby('MonthPeriod')[['Fulfillment Cost', 'Shipping Cost', 'Storage Cost']].sum()
                 monthly_trend = monthly_trend[(monthly_trend.T != 0).any()]
-                
                 table_display = monthly_trend.copy()
                 table_display.index = table_display.index.astype(str) 
                 table_display['Total Monthly Cost'] = table_display.sum(axis=1)
                 table_display = table_display.iloc[::-1]
-                
                 for col in table_display.columns:
                     table_display[col] = table_display[col].apply(lambda x: f"{cur}{x:,.2f}" if pd.notna(x) else f"{cur}0.00")
-                
                 table_display.index.name = "Month"
                 st.dataframe(table_display, use_container_width=True)
-        
         except Exception as e:
             st.error(f"Error loading Summary data: {e}")
 
-    # ==========================================
     # TAB 2: SHIPPING ANALYSIS 
-    # ==========================================
     if has_shipping_data:
         with t_ship:
             try:
                 st.subheader(f"🗺️ {reg_3pl} Shipping Analysis")
-                
-                # --- 1. PREP SUMMARY SHEET FOR LOCATIONS ---
                 df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
                 df_states_raw.columns = range(df_states_raw.shape[1])
-                
                 df_slice = df_states_raw.iloc[1:].copy()
-                
                 month_col_idx = curr_m_raw if 'curr_m_raw' in locals() else (global_curr_m if 'global_curr_m' in locals() else 1)
                 if month_col_idx >= df_slice.shape[1]: month_col_idx = df_slice.shape[1] - 1
-                
                 df_slice[month_col_idx] = df_slice[month_col_idx].apply(clean_currency)
                 df_filtered = df_slice[df_slice[month_col_idx] > 0][[0, month_col_idx]].copy()
                 df_filtered.columns = ["Location", "Shipping Cost"]
-                
                 df_filtered = df_filtered[~df_filtered["Location"].astype(str).str.lower().str.contains("total", na=False)]
                 df_filtered["Match_Loc"] = df_filtered["Location"].apply(lambda x: normalize_loc(x, reg_3pl))
-
-                # --- 2. LOAD RAW DATA & CALCULATE METRICS ---
                 raw_gid = GIDS_RAW_SHIPPING.get(reg_3pl, "")
                 loc_counts = pd.DataFrame()
-                
                 if raw_gid:
                     df_raw = load_csv(THREE_PL_SHEET_ID, raw_gid)
                     df_raw.columns = range(df_raw.shape[1])
-                    
                     if df_raw.shape[1] >= 12: 
                         best_date_col = None
                         for c in range(min(15, df_raw.shape[1])):
@@ -488,151 +472,102 @@ elif page == "🚚 3PL Costs & Logistics":
                             if parsed.notna().sum() > 5 and parsed.nunique() > 1:
                                 best_date_col = c
                                 break
-                        
                         if best_date_col is not None:
                             df_raw['ParsedDate'] = pd.to_datetime(df_raw[best_date_col], errors='coerce')
                             df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
-                            
                             recent_date = df_raw_valid['ParsedDate'].max()
                             curr_m_raw, curr_y_raw = recent_date.month, recent_date.year
                             prev_m_raw, prev_y_raw = (12, curr_y_raw - 1) if curr_m_raw == 1 else (curr_m_raw - 1, curr_y_raw)
-                            
                             df_raw_recent = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == curr_m_raw) & (df_raw_valid['ParsedDate'].dt.year == curr_y_raw)].copy()
                             df_raw_prev = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == prev_m_raw) & (df_raw_valid['ParsedDate'].dt.year == prev_y_raw)].copy()
-                            
                             if reg_3pl == "🇪🇺 EU":
                                 order_col, carrier_col = 12, 15 
-                                
                                 mask_pick_curr = df_raw_recent[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_curr = pd.to_numeric(df_raw_recent.loc[mask_pick_curr, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
                                 mask_pick_prev = df_raw_prev[6].astype(str).str.lower().str.contains('picking', na=False)
                                 total_items_prev = pd.to_numeric(df_raw_prev.loc[mask_pick_prev, 7].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').sum()
-                                
                                 mask_ship_curr = df_raw_recent[6].astype(str).str.lower().str.contains('shipping', na=False)
                                 df_eu_loc = df_raw_recent[mask_ship_curr].copy()
                                 df_eu_loc['Match_Loc'] = df_eu_loc[14].apply(lambda x: normalize_loc(x, reg_3pl))
                                 df_eu_loc = df_eu_loc[df_eu_loc['Match_Loc'] != ""]
                                 loc_counts = df_eu_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
-                                
                             else: 
                                 order_col, size_col, carrier_col = 2, 11, 6
-                                
                                 df_unique_curr = df_raw_recent.drop_duplicates(subset=[order_col])
                                 total_items_curr = pd.to_numeric(df_unique_curr[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
                                 df_unique_prev = df_raw_prev.drop_duplicates(subset=[order_col])
                                 total_items_prev = pd.to_numeric(df_unique_prev[size_col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').mean()
-
                                 df_raw_recent['Match_Loc'] = df_raw_recent[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
                                 df_usca_loc = df_raw_recent[df_raw_recent['Match_Loc'] != ""]
                                 loc_counts = df_usca_loc.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 loc_counts.columns = ['Match_Loc', 'Total Orders']
-
-                            # --- TOP METRICS CALCULATION ---
                             total_orders = df_raw_recent[order_col].replace('', pd.NA).dropna().nunique()
                             prev_total_orders = df_raw_prev[order_col].replace('', pd.NA).dropna().nunique()
-                            
                             df_carrier_source = df_raw_recent.drop_duplicates(subset=[order_col])
-                            
                             if reg_3pl == "🇪🇺 EU":
                                 avg_order_size = total_items_curr / total_orders if total_orders > 0 else 0
                                 prev_avg_order_size = total_items_prev / prev_total_orders if prev_total_orders > 0 else 0
                             else:
                                 avg_order_size = total_items_curr
                                 prev_avg_order_size = total_items_prev
-                            
                             prev_total_orders = 0 if pd.isna(prev_total_orders) else prev_total_orders
                             prev_avg_order_size = 0 if pd.isna(prev_avg_order_size) else prev_avg_order_size
                             avg_order_size = 0 if pd.isna(avg_order_size) else avg_order_size
-                            
                             delta_orders = int(total_orders - prev_total_orders)
                             delta_size = float(avg_order_size - prev_avg_order_size)
-                            
                             display_month_str = recent_date.strftime('%B %Y')
                             st.markdown(f"#### 📊 Order Metrics ({display_month_str})")
-                            
                             col1, col2 = st.columns(2)
                             col1.metric("📦 Orders Shipped", f"{int(total_orders):,}", delta=delta_orders)
                             col2.metric("📏 Average Order Size", f"{avg_order_size:,.2f}", delta=f"{delta_size:,.2f}")
-                            
-                            # --- REGIONAL DISTRIBUTION PIE CHART (US/CA Only) ---
                             if reg_3pl in ["🇺🇸 US", "🇨🇦 CA"]:
                                 st.divider()
                                 st.markdown(f"#### 🗺️ Regional Distribution ({display_month_str})")
-                                
                                 df_reg_pie = df_raw_recent.copy()
-                                if reg_3pl == "🇺🇸 US":
-                                    df_reg_pie['Macro_Region'] = df_reg_pie['Match_Loc'].map(US_MACRO).fillna('Unknown')
-                                else:
-                                    df_reg_pie['Macro_Region'] = df_reg_pie['Match_Loc'].map(CA_MACRO).fillna('Unknown')
-                                
+                                df_reg_pie['Macro_Region'] = df_reg_pie['Match_Loc'].map(US_MACRO if reg_3pl == "🇺🇸 US" else CA_MACRO).fillna('Unknown')
                                 df_reg_pie = df_reg_pie[df_reg_pie['Macro_Region'] != 'Unknown']
-                                
                                 if not df_reg_pie.empty:
                                     reg_counts = df_reg_pie.groupby('Macro_Region')[order_col].nunique().reset_index()
                                     reg_counts.columns = ['Region', 'Orders']
                                     reg_counts['Percentage'] = (reg_counts['Orders'] / reg_counts['Orders'].sum()) * 100
-                                    
                                     chart_col_reg, table_col_reg = st.columns([1, 1])
                                     with chart_col_reg:
-                                        pie_reg = alt.Chart(reg_counts).mark_arc(innerRadius=50).encode(
-                                            theta=alt.Theta(field="Orders", type="quantitative"),
-                                            color=alt.Color(field="Region", type="nominal"),
-                                            tooltip=['Region', alt.Tooltip('Percentage', format='.1f')]
-                                        ).properties(height=350)
+                                        pie_reg = alt.Chart(reg_counts).mark_arc(innerRadius=50).encode(theta=alt.Theta(field="Orders", type="quantitative"), color=alt.Color(field="Region", type="nominal"), tooltip=['Region', alt.Tooltip('Percentage', format='.1f')]).properties(height=350)
                                         st.altair_chart(pie_reg, use_container_width=True)
                                     with table_col_reg:
                                         disp_reg = reg_counts.copy()
                                         disp_reg['Percentage'] = disp_reg['Percentage'].map("{:.1f}%".format)
                                         st.dataframe(disp_reg[['Region', 'Percentage']], hide_index=True, use_container_width=True)
-
-                            # --- CARRIER USAGE ---
                             st.divider()
                             st.markdown(f"#### 🚚 Carrier Usage ({display_month_str})")
-                            
                             carriers = df_carrier_source[carrier_col].astype(str).replace(['nan', 'NaN', 'None', ''], pd.NA).dropna()
                             if not carriers.empty:
                                 c_counts = carriers.value_counts().reset_index()
                                 c_counts.columns = ['Carrier', 'Orders']
                                 c_counts['Percentage'] = (c_counts['Orders'] / c_counts['Orders'].sum()) * 100
                                 chart_col, table_col = st.columns([1, 1])
-                                
                                 with chart_col:
-                                    pie = alt.Chart(c_counts).mark_arc(innerRadius=50).encode(
-                                        theta=alt.Theta(field="Orders", type="quantitative"),
-                                        color=alt.Color(field="Carrier", type="nominal"),
-                                        tooltip=['Carrier', alt.Tooltip('Percentage', format='.1f')]
-                                    ).properties(height=350)
+                                    pie = alt.Chart(c_counts).mark_arc(innerRadius=50).encode(theta=alt.Theta(field="Orders", type="quantitative"), color=alt.Color(field="Carrier", type="nominal"), tooltip=['Carrier', alt.Tooltip('Percentage', format='.1f')]).properties(height=350)
                                     st.altair_chart(pie, use_container_width=True)
-                                
                                 with table_col:
                                     disp_counts = c_counts.copy()
                                     disp_counts['Percentage'] = disp_counts['Percentage'].map("{:.1f}%".format)
                                     st.dataframe(disp_counts[['Carrier', 'Percentage']], hide_index=True, use_container_width=True)
-                            
-                            # --- 3. FINAL LOCATION TABLE BUILDER ---
                             st.divider()
                             st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
-                            
                             if not df_filtered.empty:
                                 if not loc_counts.empty:
                                     df_filtered = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left')
                                     df_filtered['Total Orders'] = df_filtered['Total Orders'].fillna(0).astype(int)
                                 else:
                                     df_filtered['Total Orders'] = 0
-                                    st.info("ℹ️ Note: Could not calculate Order Counts from raw data.")
-                                
                                 df_filtered = df_filtered[["Location", "Total Orders", "Shipping Cost"]]
                                 df_filtered = df_filtered.sort_values(by="Shipping Cost", ascending=False)
                                 df_filtered["Shipping Cost"] = df_filtered["Shipping Cost"].apply(lambda x: f"{cur}{x:,.2f}")
                                 st.dataframe(df_filtered, hide_index=True, use_container_width=True)
-                            else:
-                                st.warning("⚠️ No valid costs found for the current month in Summary data.")
-                                
-                            # --- 4. YTD TOP 3 DESTINATIONS ---
                             st.divider()
                             st.markdown(f"#### 🏆 YTD {curr_y_raw} Top 3 Destinations (Order Volume %)")
-                            
                             df_raw_ytd = df_raw_valid[df_raw_valid['ParsedDate'].dt.year == curr_y_raw].copy()
                             if not df_raw_ytd.empty:
                                 if reg_3pl == "🇪🇺 EU":
@@ -642,62 +577,36 @@ elif page == "🚚 3PL Costs & Logistics":
                                 else:
                                     df_loc_ytd = df_raw_ytd.copy()
                                     df_loc_ytd['Match_Loc'] = df_loc_ytd[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
-                                
                                 df_loc_ytd = df_loc_ytd[df_loc_ytd['Match_Loc'] != ""]
-                                
                                 ytd_loc_counts = df_loc_ytd.groupby('Match_Loc')[order_col].nunique().reset_index()
                                 ytd_loc_counts.columns = ['Location', 'YTD Orders']
                                 total_ytd_orders = ytd_loc_counts['YTD Orders'].sum()
-                                
                                 if total_ytd_orders > 0:
                                     ytd_loc_counts['Percentage'] = (ytd_loc_counts['YTD Orders'] / total_ytd_orders) * 100
                                     top3_ytd = ytd_loc_counts.nlargest(3, 'YTD Orders').copy()
-                                    
-                                    top3_ytd['Location'] = top3_ytd['Location'].astype(str).str.title()
-                                    top3_ytd['Location'] = top3_ytd['Location'].apply(lambda x: x.upper() if len(x) == 2 else x)
+                                    top3_ytd['Location'] = top3_ytd['Location'].astype(str).str.title().apply(lambda x: x.upper() if len(x) == 2 else x)
                                     top3_ytd['Percentage'] = top3_ytd['Percentage'].map("{:.1f}%".format)
-                                    
                                     st.dataframe(top3_ytd, hide_index=True, use_container_width=True)
-                                else:
-                                    st.info("No YTD order data available for locations.")
-                                    
-                                # --- 5. YTD REGIONAL DISTRIBUTION PIE CHART (US/CA Only) ---
                                 if reg_3pl in ["🇺🇸 US", "🇨🇦 CA"]:
                                     st.divider()
                                     st.markdown(f"#### 🗺️ YTD {curr_y_raw} Regional Distribution")
-                                    
                                     df_ytd_pie = df_loc_ytd.copy()
-                                    if reg_3pl == "🇺🇸 US":
-                                        df_ytd_pie['Macro_Region'] = df_ytd_pie['Match_Loc'].map(US_MACRO).fillna('Unknown')
-                                    else:
-                                        df_ytd_pie['Macro_Region'] = df_ytd_pie['Match_Loc'].map(CA_MACRO).fillna('Unknown')
-                                    
+                                    df_ytd_pie['Macro_Region'] = df_ytd_pie['Match_Loc'].map(US_MACRO if reg_3pl == "🇺🇸 US" else CA_MACRO).fillna('Unknown')
                                     df_ytd_pie = df_ytd_pie[df_ytd_pie['Macro_Region'] != 'Unknown']
-                                    
                                     if not df_ytd_pie.empty:
                                         ytd_reg_counts = df_ytd_pie.groupby('Macro_Region')[order_col].nunique().reset_index()
                                         ytd_reg_counts.columns = ['Region', 'Orders']
                                         ytd_reg_counts['Percentage'] = (ytd_reg_counts['Orders'] / ytd_reg_counts['Orders'].sum()) * 100
-                                        
                                         chart_col_ytd_reg, table_col_ytd_reg = st.columns([1, 1])
                                         with chart_col_ytd_reg:
-                                            pie_ytd_reg = alt.Chart(ytd_reg_counts).mark_arc(innerRadius=50).encode(
-                                                theta=alt.Theta(field="Orders", type="quantitative"),
-                                                color=alt.Color(field="Region", type="nominal"),
-                                                tooltip=['Region', alt.Tooltip('Percentage', format='.1f')]
-                                            ).properties(height=350)
+                                            pie_ytd_reg = alt.Chart(ytd_reg_counts).mark_arc(innerRadius=50).encode(theta=alt.Theta(field="Orders", type="quantitative"), color=alt.Color(field="Region", type="nominal"), tooltip=['Region', alt.Tooltip('Percentage', format='.1f')]).properties(height=350)
                                             st.altair_chart(pie_ytd_reg, use_container_width=True)
                                         with table_col_ytd_reg:
                                             disp_ytd_reg = ytd_reg_counts.copy()
                                             disp_ytd_reg['Percentage'] = disp_ytd_reg['Percentage'].map("{:.1f}%".format)
                                             st.dataframe(disp_ytd_reg[['Region', 'Percentage']], hide_index=True, use_container_width=True)
-                                            
-                            else:
-                                st.info("No YTD data available.")
-                                
                         else:
                             st.info("⚠️ Could not find real dates in raw data to filter by month.")
-                
             except Exception as e:
                 st.error(f"Error loading Shipping Analysis: {e}")
 
