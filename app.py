@@ -52,30 +52,7 @@ GIDS_RAW_SHIPPING = {
     "🇪🇺 EU": "1062524574"
 }
 
-# --- MACRO REGION MAPS ---
-US_MACRO = {'alabama': 'East', 'alaska': 'West', 'arizona': 'West', 'arkansas': 'Central', 'california': 'West', 'colorado': 'West', 'connecticut': 'East', 'delaware': 'East', 'florida': 'East', 'georgia': 'East', 'hawaii': 'West', 'idaho': 'West', 'illinois': 'Central', 'indiana': 'Central', 'iowa': 'Central', 'kansas': 'Central', 'kentucky': 'East', 'louisiana': 'Central', 'maine': 'East', 'maryland': 'East', 'massachusetts': 'East', 'michigan': 'Central', 'minnesota': 'Central', 'mississippi': 'East', 'missouri': 'Central', 'montana': 'West', 'nebraska': 'Central', 'nevada': 'West', 'new hampshire': 'East', 'new jersey': 'East', 'new mexico': 'West', 'new york': 'East', 'north carolina': 'East', 'north dakota': 'Central', 'ohio': 'Central', 'oklahoma': 'Central', 'oregon': 'West', 'pennsylvania': 'East', 'rhode island': 'East', 'south carolina': 'East', 'south dakota': 'Central', 'tennessee': 'East', 'texas': 'Central', 'utah': 'West', 'vermont': 'East', 'virginia': 'East', 'washington': 'West', 'west virginia': 'East', 'wisconsin': 'Central', 'wyoming': 'West'}
-CA_MACRO = {'alberta': 'West', 'british columbia': 'West', 'manitoba': 'West', 'new brunswick': 'East', 'newfoundland and labrador': 'East', 'nova scotia': 'East', 'northwest territories': 'West', 'nunavut': 'West', 'ontario': 'East', 'prince edward island': 'East', 'quebec': 'East', 'saskatchewan': 'West', 'yukon': 'West'}
-
 # --- UTILITIES ---
-def normalize_loc(s, reg):
-    if pd.isna(s): return ""
-    s = str(s).lower().strip()
-    if s == 'nan' or s == '': return ""
-    if reg == "🇪🇺 EU":
-        eu_map = {'de':'germany', 'fr':'france', 'it':'italy', 'es':'spain', 'nl':'netherlands', 'be':'belgium', 'at':'austria', 'pl':'poland', 'se':'sweden', 'dk':'denmark', 'fi':'finland', 'pt':'portugal', 'ie':'ireland', 'gr':'greece', 'cz':'czech republic', 'ro':'romania', 'hu':'hungry', 'bg':'bulgaria', 'sk':'slovakia', 'hr':'croatia', 'si':'slovenia', 'ee':'estonia', 'lv':'latvia', 'lt':'lithuania', 'cy':'cyprus', 'mt':'malta', 'lu':'luxembourg', 'ch':'switzerland', 'no':'norway', 'gb':'united kingdom', 'uk':'united kingdom', 'fra':'france', 'deu':'germany', 'ita':'italy', 'esp':'spain', 'nld':'netherlands', 'gbr':'united kingdom'}
-        return eu_map.get(s, s)
-    elif reg == "🇺🇸 US":
-        us_map = {'al':'alabama', 'ak':'alaska', 'az':'arizona', 'ar':'arkansas', 'ca':'california', 'co':'colorado', 'ct':'connecticut', 'de':'delaware', 'fl':'florida', 'ga':'georgia', 'hi':'hawaii', 'id':'idaho', 'il':'illinois', 'in':'indiana', 'ia':'iowa', 'ks':'kansas', 'ky':'kentucky', 'la':'louisiana', 'me':'maine', 'md':'maryland', 'ma':'massachusetts', 'mi':'michigan', 'mn':'minnesota', 'ms':'mississippi', 'mo':'missouri', 'mt':'montana', 'ne':'nebraska', 'nv':'nevada', 'nh':'new hampshire', 'nj':'new jersey', 'nm':'new mexico', 'ny':'new york', 'nc':'north carolina', 'nd':'north dakota', 'oh':'ohio', 'ok':'oklahoma', 'or':'oregon', 'pa':'pennsylvania', 'ri':'rhode island', 'sc':'south carolina', 'sd':'south dakota', 'tn':'tennessee', 'tx':'texas', 'ut':'utah', 'vt':'vermont', 'va':'virginia', 'wa':'washington', 'wv':'west virginia', 'wi':'wisconsin', 'wy':'wyoming'}
-        return us_map.get(s, s)
-    return s
-
-def extract_state(val):
-    if pd.isna(val): return ""
-    v = str(val).upper().strip()
-    match = re.search(r'\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b', v)
-    if match: return match.group(1).lower()
-    return ""
-
 @st.cache_data(ttl=300)
 def load_csv(sheet_id, gid):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
@@ -83,6 +60,7 @@ def load_csv(sheet_id, gid):
 
 def is_valid_sku(s):
     s = str(s).upper().strip()
+    if s in ["NAN", "", "TOTAL", "HEALTH", "RISK"]: return False
     return any(x in s for x in ["MA-","MC-","MK-","MP-","MV-","MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"])
 
 def is_cam(s):
@@ -95,7 +73,7 @@ chan = st.sidebar.selectbox("Sales Channel", ["Shopify/WH", "Amazon (FBA)"])
 menu_options = ["📦 Inventory & Risk", "💰 Sales Performance", "🚚 3PL Costs & Logistics"]
 page = st.sidebar.radio("Dashboard View", menu_options)
 
-# --- SALES PERFORMANCE (REWRITTEN FOR DATE ACCURACY) ---
+# --- SALES PERFORMANCE ---
 if page == "💰 Sales Performance":
     st.title(f"💰 {chan} Sales Performance")
     active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
@@ -110,52 +88,57 @@ if page == "💰 Sales Performance":
         q_col = next(c for c in df.columns if 'qty' in c or 'quantity' in c)
         d_col = next(c for c in df.columns if 'date' in c)
         
-        # 2. Hard Date Conversion
+        # 2. Data Cleaning
         df['clean_date'] = pd.to_datetime(df[d_col], errors='coerce').dt.date
-        df = df.dropna(subset=['clean_date', q_col])
+        df = df[df[s_col].apply(is_valid_sku)]
         df['quantity'] = pd.to_numeric(df[q_col], errors='coerce').fillna(0)
         
-        # 3. SET STRICT WEEKLY WINDOWS
-        # Current Week: April 27 (Monday) to May 3 (Sunday)
+        # 3. Time Windows
         target_end = datetime(2026, 5, 3).date()
         target_start = datetime(2026, 4, 27).date()
-        
-        # Previous Week: April 20 to April 26
         prev_end = target_start - timedelta(days=1)
         prev_start = target_start - timedelta(days=7)
         
-        st.info(f"📅 **Confirmed Window:** {target_start} to {target_end}")
+        st.info(f"📅 **Weekly Window:** {target_start} to {target_end}")
         
-        # 4. Filter & Aggregate
-        curr_df = df[(df['clean_date'] >= target_start) & (df['clean_date'] <= target_end)]
-        prev_df = df[(df['clean_date'] >= prev_start) & (df['clean_date'] <= prev_end)]
+        # 4. Weekly Calculation
+        curr_week = df[(df['clean_date'] >= target_start) & (df['clean_date'] <= target_end)]
+        prev_week = df[(df['clean_date'] >= prev_start) & (df['clean_date'] <= prev_end)]
         
-        curr_sums = curr_df.groupby(s_col)['quantity'].sum().reset_index()
-        prev_sums = prev_df.groupby(s_col)['quantity'].sum().reset_index()
+        c_sums = curr_week.groupby(s_col)['quantity'].sum().reset_index()
+        p_sums = prev_week.groupby(s_col)['quantity'].sum().reset_index()
         
-        res = pd.merge(curr_sums, prev_sums, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
+        res = pd.merge(c_sums, p_sums, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
         res['Diff'] = res['quantity_C'] - res['quantity_P']
         
-        # 5. Metrics
+        # 5. Dashboard Metrics
         m1, m2 = st.columns(2)
         with m1:
-            cam_val = res[res[s_col].apply(is_cam)]['quantity_C'].sum()
-            cam_prev = res[res[s_col].apply(is_cam)]['quantity_P'].sum()
-            st.metric("📸 Camera Units", f"{int(cam_val)}", delta=f"{int(cam_val - cam_prev)}")
+            cam_c = res[res[s_col].apply(is_cam)]['quantity_C'].sum()
+            cam_p = res[res[s_col].apply(is_cam)]['quantity_P'].sum()
+            st.metric("📸 Camera Units (Weekly)", f"{int(cam_c)}", delta=f"{int(cam_c - cam_p)}")
         with m2:
-            acc_val = res[~res[s_col].apply(is_cam)]['quantity_C'].sum()
-            acc_prev = res[~res[s_col].apply(is_cam)]['quantity_P'].sum()
-            st.metric("🎒 Accessory Units", f"{int(acc_val)}", delta=f"{int(acc_val - acc_prev)}")
+            acc_c = res[~res[s_col].apply(is_cam)]['quantity_C'].sum()
+            acc_p = res[~res[s_col].apply(is_cam)]['quantity_P'].sum()
+            st.metric("🎒 Accessory Units (Weekly)", f"{int(acc_c)}", delta=f"{int(acc_c - acc_p)}")
             
+        # 6. RESTORED YTD TOP SALES
         st.divider()
-        st.subheader("🚀 Top Weekly Movers")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.success("📸 Top Cameras")
-            st.dataframe(res[res[s_col].apply(is_cam)].nlargest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Qty'}), hide_index=True, use_container_width=True)
-        with c2:
-            st.success("🎒 Top Accessories")
-            st.dataframe(res[~res[s_col].apply(is_cam)].nlargest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Qty'}), hide_index=True, use_container_width=True)
+        curr_year = target_end.year
+        st.subheader(f"🏆 YTD {curr_year} Top Rankings (Total Units)")
+        
+        ytd_df = df[pd.to_datetime(df['clean_date']).dt.year == curr_year]
+        ytd_sums = ytd_df.groupby(s_col)['quantity'].sum().reset_index()
+        
+        y1, y2 = st.columns(2)
+        with y1:
+            st.markdown("#### 🥇 Top 5 Cameras")
+            top_c = ytd_sums[ytd_sums[s_col].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_c.rename(columns={s_col:'SKU', 'quantity':'Total Units'}), hide_index=True, use_container_width=True)
+        with y2:
+            st.markdown("#### 🥇 Top 5 Accessories")
+            top_a = ytd_sums[~ytd_sums[s_col].apply(is_cam)].nlargest(5, 'quantity')
+            st.dataframe(top_a.rename(columns={s_col:'SKU', 'quantity':'Total Units'}), hide_index=True, use_container_width=True)
 
     except Exception as e:
         st.error(f"Sales Data Error: {e}")
@@ -183,7 +166,7 @@ elif page == "📦 Inventory & Risk":
         low = s_df[(s_df["Stock"] > 0) & (s_df["Stock"] < 50)]
         st.dataframe(low.sort_values(by="Stock"), hide_index=True, use_container_width=True)
 
-# --- 3PL COSTS & LOGISTICS (STABLE VERSION) ---
+# --- 3PL COSTS & LOGISTICS ---
 elif page == "🚚 3PL Costs & Logistics":
     st.title("🚚 3PL Costs & Logistics Analytics")
     reg_3pl = st.sidebar.selectbox("Region", list(SUMMARY_COLS.keys()))
@@ -195,11 +178,9 @@ elif page == "🚚 3PL Costs & Logistics":
         df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
         df_sum = df_sum.dropna(subset=[0])
         
-        # Clean currency
         cols = SUMMARY_COLS[reg_3pl]
         for c in [cols["fulfill"], cols["shipping"], cols["storage"]]:
-            df_sum[c] = df_sum[c].astype(str).str.replace(r'[^\d.-]', '', regex=True)
-            df_sum[c] = pd.to_numeric(df_sum[c], errors='coerce').fillna(0)
+            df_sum[c] = pd.to_numeric(df_sum[c].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
             
         df_sum['YM'] = df_sum[0].dt.to_period('M')
         monthly = df_sum.groupby('YM')[[cols["fulfill"], cols["shipping"], cols["storage"]]].sum()
@@ -216,7 +197,6 @@ elif page == "🚚 3PL Costs & Logistics":
         disp_table = monthly.copy().iloc[::-1]
         disp_table.index = disp_table.index.astype(str)
         st.dataframe(disp_table.map(lambda x: f"{cur}{x:,.2f}"), use_container_width=True)
-        
     except Exception as e:
         st.error(f"3PL Summary Error: {e}")
 
