@@ -236,7 +236,10 @@ elif page == "🚚 3PL Costs & Logistics":
             monthly_trend = valid_months_df.copy().iloc[::-1]
             monthly_trend.columns = ['Fulfillment', 'Shipping', 'Storage']
             monthly_trend.index = monthly_trend.index.astype(str)
-            st.dataframe(monthly_trend.applymap(lambda x: f"{cur}{x:,.2f}"), use_container_width=True)
+            
+            # FIXED: Using map instead of applymap for Pandas 2.1.0+ compatibility
+            formatted_df = monthly_trend.map(lambda x: f"{cur}{x:,.2f}")
+            st.dataframe(formatted_df, use_container_width=True)
         except Exception as e: st.error(f"Summary data error: {e}")
 
     if t_ship:
@@ -275,7 +278,6 @@ elif page == "🚚 3PL Costs & Logistics":
                         c1, c2 = st.columns(2)
                         with c1: st.altair_chart(alt.Chart(reg_counts).mark_arc(innerRadius=50).encode(theta='Orders', color='Region'), use_container_width=True)
                         with c2: 
-                            # Safe formatting for table
                             reg_display = reg_counts[['Region']].copy()
                             reg_display['Percentage'] = reg_counts['%'].apply(lambda x: f"{x:.1f}%")
                             st.dataframe(reg_display, hide_index=True, use_container_width=True)
