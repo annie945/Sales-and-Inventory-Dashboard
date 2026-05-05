@@ -19,11 +19,11 @@ MAIN_SHEET_ID = "1oXGTHDhdnxj99q7vXLe3S2TliT04picEzPdCgtNzaYs"
 THREE_PL_SHEET_ID = "1UzHDyqkj1fvGYOXk8e_iOSWYsIofHB7id0hjEaX7Rm4"
 PO_MASTER_SHEET_ID = "1qaITe6eRrJMY_Z1JdC_la-Z69OiwIlOWbRE6jj7uh0A"
 
-# GIDs
 GIDS_ORIG = {"🇺🇸 US": "1304392959", "🇨🇦 CA": "634720426", "🇬🇧 UK": "1657555313", "🇦🇺 AU": "1871282385", "🇪🇺 EU": "975667344"}
 GIDS_AMZ = {"🇺🇸 US": "1758192113", "🇨🇦 CA": "297394922", "🇬🇧 UK": "1202968115", "🇦🇺 AU": "1435942430"}
 GID_3PL_SUMMARY = "972554877" 
 GID_PO_GRID = "1801670245"
+GIDS_3PL_SHIPPING = {"🇺🇸 US": "1369957058", "🇨🇦 CA": "332821648", "🇪🇺 EU": "1032280204"}
 GIDS_RAW_SHIPPING = {"🇺🇸 US": "215858249", "🇨🇦 CA": "91803080", "🇪🇺 EU": "1062524574"}
 
 SUMMARY_COLS = {
@@ -69,13 +69,15 @@ chan = st.sidebar.selectbox("Sales Channel", ["Shopify/WH", "Amazon (FBA)"])
 menu_options = ["📦 Inventory & Risk", "💰 Sales Performance", "🚚 3PL Costs & Logistics"]
 page = st.sidebar.radio("Dashboard View", menu_options)
 
-# --- 1. INVENTORY & INBOUND ---
+# ==========================================
+# 1. INVENTORY & RISK
+# ==========================================
 if page == "📦 Inventory & Risk":
     st.title(f"📦 {chan} Inventory & Risk")
     m_map = {"🇺🇸 US": 4, "🇨🇦 CA": 11, "🇬🇧 UK": 25, "🇦🇺 AU": 18} if chan == "Amazon (FBA)" else {"🇺🇸 US":7,"🇨🇦 CA":15,"🇬🇧 UK":22,"🇦🇺 AU":29,"🇪🇺 EU":38}
     m_sel = st.radio("Market", list(m_map.keys()), horizontal=True)
 
-    # Inbound Section
+    # 1A. Inbound Pipeline
     try:
         st.subheader("🚚 Inbound Pipeline")
         df_po = load_csv(PO_MASTER_SHEET_ID, GID_PO_GRID)
@@ -91,9 +93,9 @@ if page == "📦 Inventory & Risk":
             st.dataframe(df_po_filtered[['PO NUMBER', 'SKU', 'SHIPPED QTY', 'ETA', 'TRACKING']], hide_index=True)
         else:
             st.info("No incoming shipments for this region.")
-    except: st.warning("Could not load Inbound data.")
+    except Exception as e: st.warning(f"Could not load Inbound data: {e}")
 
-    # Stock Section
+    # 1B. Stock Levels (OOS, Low, Full)
     inv_gid = "856174189" if chan == "Amazon (FBA)" else "0"
     df_inv = load_csv(MAIN_SHEET_ID, inv_gid)
     s_df = df_inv.iloc[:, [0, m_map[m_sel]]].copy()
@@ -103,8 +105,12 @@ if page == "📦 Inventory & Risk":
     
     st.divider()
     c1, c2 = st.columns(2)
-    with c1: st.subheader("🔴 Out of Stock (OOS)"); st.dataframe(s_df[s_df["Stock"]==0], hide_index=True)
-    with c2: st.subheader("🟡 Low Stock (<50)"); st.dataframe(s_df[(s_df["Stock"]>0)&(s_df["Stock"]<50)].sort_values(by="Stock"), hide_index=True)
+    with c1: 
+        st.subheader("🔴 Out of Stock (OOS)")
+        st.dataframe(s_df[s_df["Stock"]==0], hide_index=True)
+    with c2: 
+        st.subheader("🟡 Low Stock (<50)")
+        st.dataframe(s_df[(s_df["Stock"]>0)&(s_df["Stock"]<50)].sort_values(by="Stock"), hide_index=True)
     
     st.divider()
     st.subheader("📋 Full Inventory List")
@@ -112,71 +118,86 @@ if page == "📦 Inventory & Risk":
     with col_a: st.markdown("#### 📸 Cameras"); st.dataframe(s_df[s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
     with col_b: st.markdown("#### 🎒 Accessories"); st.dataframe(s_df[~s_df["SKU"].apply(is_cam)], hide_index=True, use_container_width=True)
 
-
-# --- 2. SALES ---
+# ==========================================
+# 2. SALES PERFORMANCE
+# ==========================================
 elif page == "💰 Sales Performance":
     st.title(f"💰 {chan} Sales Performance")
     active_gids = GIDS_AMZ if chan == "Amazon (FBA)" else GIDS_ORIG
     reg = st.sidebar.selectbox("Region", list(active_gids.keys()))
+    
     try:
         df = load_csv(MAIN_SHEET_ID, active_gids[reg])
         df.columns = [str(c).lower().strip() for c in df.columns]
-        s_col, q_col, d_col = next(c for c in df.columns if 'sku' in c), next(c for c in df.columns if 'qty' in c or 'quantity' in c), next(c for c in df.columns if 'date' in c)
+        s_col = next(c for c in df.columns if 'sku' in c)
+        q_col = next(c for c in df.columns if 'qty' in c or 'quantity' in c)
+        d_col = next(c for c in df.columns if 'date' in c)
         
         # Clean Data
         df['clean_date'] = pd.to_datetime(df[d_col], errors='coerce').dt.date
         df = df[df[s_col].apply(is_valid_sku)]
         df['quantity'] = pd.to_numeric(df[q_col], errors='coerce').fillna(0)
         
-        # STRICT WINDOW
+        # Strict Date Window
         target_start, target_end = datetime(2026, 4, 27).date(), datetime(2026, 5, 3).date()
         prev_start, prev_end = target_start - timedelta(7), target_start - timedelta(1)
-        st.info(f"📍 **Confirmed Window:** April 27 - May 3")
+        st.info(f"📍 **Confirmed Audit Window:** April 27 to May 3")
         
         curr_w = df[(df['clean_date'] >= target_start) & (df['clean_date'] <= target_end)]
         prev_w = df[(df['clean_date'] >= prev_start) & (df['clean_date'] <= prev_end)]
         
-        # SAFE MERGE: Prevents KeyError by ensuring columns exist even if empty
+        # Bulletproof Merge
         c_sum = curr_w.groupby(s_col)['quantity'].sum().reset_index()
         p_sum = prev_w.groupby(s_col)['quantity'].sum().reset_index()
-        recon = pd.merge(c_sum, p_sum, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
-        recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
         
-        m1, m2 = st.columns(2)
-        with m1: 
-            val_c = recon[recon[s_col].apply(is_cam)]['quantity_C'].sum()
-            val_p = recon[recon[s_col].apply(is_cam)]['quantity_P'].sum()
-            st.metric("📸 Cameras (Weekly)", f"{int(val_c)} units", delta=int(val_c - val_p))
-        with m2: 
-            val_c = recon[~recon[s_col].apply(is_cam)]['quantity_C'].sum()
-            val_p = recon[~recon[s_col].apply(is_cam)]['quantity_P'].sum()
-            st.metric("🎒 Accessories (Weekly)", f"{int(val_c)} units", delta=int(val_c - val_p))
-        
-        st.divider()
-        st.subheader("🚀 Weekly SKU Movers")
-        c1, c2 = st.columns(2)
-        with c1: 
-            st.success("📈 Top 5 Weekly")
-            st.dataframe(recon.nlargest(5, 'Diff')[[s_col, 'Diff']].rename(columns={s_col:'SKU'}), hide_index=True, use_container_width=True)
-        with c2: 
-            st.error("📉 Bottom 5 Weekly")
-            st.dataframe(recon.nsmallest(5, 'Diff')[[s_col, 'Diff']].rename(columns={s_col:'SKU'}), hide_index=True, use_container_width=True)
+        if c_sum.empty and p_sum.empty:
+            st.warning("⚠️ No sales recorded for this period.")
+        else:
+            recon = pd.merge(c_sum, p_sum, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
+            recon['Diff'] = recon['quantity_C'] - recon['quantity_P']
+            
+            m1, m2 = st.columns(2)
+            with m1: 
+                val_c = recon[recon[s_col].apply(is_cam)]['quantity_C'].sum()
+                val_p = recon[recon[s_col].apply(is_cam)]['quantity_P'].sum()
+                st.metric("📸 Cameras (Weekly)", f"{int(val_c)} units", delta=int(val_c - val_p))
+            with m2: 
+                val_c = recon[~recon[s_col].apply(is_cam)]['quantity_C'].sum()
+                val_p = recon[~recon[s_col].apply(is_cam)]['quantity_P'].sum()
+                st.metric("🎒 Accessories (Weekly)", f"{int(val_c)} units", delta=int(val_c - val_p))
+            
+            st.divider()
+            st.subheader("🚀 Weekly SKU Rankings")
+            c1, c2 = st.columns(2)
+            with c1: 
+                st.success("📈 Top 5 Weekly Sellers")
+                st.dataframe(recon.nlargest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Units'}), hide_index=True, use_container_width=True)
+            with c2: 
+                st.error("📉 Bottom 5 Weekly Sellers")
+                # Filter out 0s so bottom 5 shows actual slow movers, not just missing items
+                bottom_week = recon[recon['quantity_C'] > 0]
+                st.dataframe(bottom_week.nsmallest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Units'}), hide_index=True, use_container_width=True)
 
+        # YTD Section
         st.divider()
-        st.subheader(f"🏆 YTD {target_end.year} Top & Bottom Sellers")
+        st.subheader(f"🏆 YTD {target_end.year} Rankings")
         ytd = df[pd.to_datetime(df['clean_date']).dt.year == target_end.year].groupby(s_col)['quantity'].sum().reset_index()
-        y1, y2 = st.columns(2)
+        
         if not ytd.empty:
+            ytd = ytd[ytd['quantity'] > 0] # Clean 0s
+            y1, y2 = st.columns(2)
             with y1: 
-                st.markdown("#### 🥇 Top 5 Sellers")
+                st.markdown("#### 🥇 Top 5 Sellers (YTD)")
                 st.dataframe(ytd.nlargest(5, 'quantity').rename(columns={s_col:'SKU','quantity':'Units'}), hide_index=True, use_container_width=True)
             with y2: 
-                st.markdown("#### 📉 Bottom 5 Sellers")
+                st.markdown("#### 📉 Bottom 5 Sellers (YTD)")
                 st.dataframe(ytd.nsmallest(5, 'quantity').rename(columns={s_col:'SKU','quantity':'Units'}), hide_index=True, use_container_width=True)
                 
     except Exception as e: st.error(f"Error loading sales data: {e}")
 
-# --- 3. LOGISTICS & REGION ANALYSIS ---
+# ==========================================
+# 3. 3PL COSTS & LOGISTICS
+# ==========================================
 elif page == "🚚 3PL Costs & Logistics":
     st.title("🚚 3PL Costs & Logistics Analytics")
     reg_3pl = st.sidebar.selectbox("Region", list(SUMMARY_COLS.keys()))
@@ -184,51 +205,117 @@ elif page == "🚚 3PL Costs & Logistics":
     
     t_sum, t_ship = st.tabs(["📊 Cost Summary", "🗺️ Shipping Region Analysis"])
     
+    # 3A. COST SUMMARY
     with t_sum:
         try:
-            df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY); df_sum.columns = range(df_sum.shape[1])
-            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce'); df_sum = df_sum.dropna(subset=[0])
+            df_sum = load_csv(THREE_PL_SHEET_ID, GID_3PL_SUMMARY)
+            df_sum.columns = range(df_sum.shape[1])
+            df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
+            df_sum = df_sum.dropna(subset=[0])
+            
             cols = SUMMARY_COLS[reg_3pl]
             for c in [cols["fulfill"], cols["shipping"], cols["storage"]]:
                 df_sum[c] = pd.to_numeric(df_sum[c].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+            
             monthly = df_sum.groupby(df_sum[0].dt.to_period('M'))[[cols["fulfill"], cols["shipping"], cols["storage"]]].sum()
+            latest_month = monthly.index[-1]
             latest = monthly.iloc[-1]
             
+            st.subheader(f"💸 Monthly Overview ({latest_month.strftime('%B %Y')})")
             c1, c2, c3 = st.columns(3)
             c1.metric("Storage Cost", f"{cur}{latest[cols['storage']]:,.2f}")
-            c2.metric("Fulfillment Cost", f"{cur}{latest[cols['fulfill']]:,.2f}")
+            c2.metric("Warehouse Fulfillment Cost", f"{cur}{latest[cols['fulfill']]:,.2f}")
             c3.metric("Shipping Cost", f"{cur}{latest[cols['shipping']]:,.2f}")
             
-            st.divider(); st.subheader("📋 Cost Breakdown")
+            st.divider()
+            st.subheader("📋 Historical Cost Breakdown")
             trend = monthly.iloc[::-1].copy().reset_index()
             trend.columns = ['Month', 'Fulfillment', 'Shipping', 'Storage']
             trend['Month'] = trend['Month'].astype(str)
-            st.dataframe(trend.map(lambda x: f"{cur}{x:,.2f}" if isinstance(x, (int, float)) else x), hide_index=True, use_container_width=True)
-        except: st.error("Summary cost data unavailable.")
+            st.dataframe(trend.style.format({c:f'{cur}{{:.2f}}' for c in ['Fulfillment','Shipping','Storage']}), hide_index=True, use_container_width=True)
+            
+        except Exception as e: st.error(f"Summary cost data unavailable: {e}")
 
+    # 3B. SHIPPING ANALYSIS
     with t_ship:
         try:
-            raw = load_csv(THREE_PL_SHEET_ID, GIDS_RAW_SHIPPING[reg_3pl]); raw.columns = range(raw.shape[1])
+            # Load Raw Orders
+            raw = load_csv(THREE_PL_SHEET_ID, GIDS_RAW_SHIPPING[reg_3pl])
+            raw.columns = range(raw.shape[1])
+            
+            # Find date column and filter for latest month to match summary
+            best_date_col = next((c for c in range(15) if pd.to_datetime(raw[c], errors='coerce').notna().sum() > 5), 0)
+            raw['ParsedDate'] = pd.to_datetime(raw[best_date_col], errors='coerce')
+            raw_valid = raw.dropna(subset=['ParsedDate']).copy()
+            curr_y = raw_valid['ParsedDate'].dt.year.max()
+            curr_m = raw_valid[raw_valid['ParsedDate'].dt.year == curr_y]['ParsedDate'].dt.month.max()
+            
+            raw_recent = raw_valid[(raw_valid['ParsedDate'].dt.year == curr_y) & (raw_valid['ParsedDate'].dt.month == curr_m)].copy()
             order_col = 12 if reg_3pl == "🇪🇺 EU" else 2
-            st.subheader(f"📍 {reg_3pl} Shipping Distribution")
+            
+            # Load Costs by Location
+            df_states_raw = load_csv(THREE_PL_SHEET_ID, GIDS_3PL_SHIPPING[reg_3pl])
+            df_states_raw.columns = range(df_states_raw.shape[1])
+            df_slice = df_states_raw.iloc[1:].copy()
+            month_col_idx = curr_m # Assuming columns match month numbers
+            
+            # Clean Cost column
+            df_slice[month_col_idx] = pd.to_numeric(df_slice[month_col_idx].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+            df_filtered = df_slice[[0, month_col_idx]].rename(columns={0: "Location", month_col_idx: "Shipping Cost"})
+            df_filtered = df_filtered[(df_filtered["Shipping Cost"] > 0) & (~df_filtered["Location"].astype(str).str.lower().str.contains("total"))].copy()
+            df_filtered["Match_Loc"] = df_filtered["Location"].apply(lambda x: normalize_loc(x, reg_3pl))
+
+            # Display Metrics
+            total_orders = raw_recent[order_col].nunique()
+            st.markdown(f"#### 📊 Order Metrics ({datetime(curr_y, curr_m, 1).strftime('%B %Y')})")
+            st.metric("Orders Shipped", f"{total_orders:,}")
             
             if reg_3pl in ["🇺🇸 US", "🇨🇦 CA"]:
-                raw['State'] = raw[4].apply(extract_state)
-                raw['Macro'] = raw['State'].map(US_MACRO if reg_3pl=="🇺🇸 US" else CA_MACRO).fillna('Other')
-                dist = raw.groupby('Macro')[order_col].nunique().reset_index().rename(columns={order_col:'Orders'})
+                st.divider()
+                st.markdown("#### 🗺️ Regional Distribution")
+                raw_recent['State'] = raw_recent[4].apply(extract_state)
+                raw_recent['Macro'] = raw_recent['State'].map(US_MACRO if reg_3pl=="🇺🇸 US" else CA_MACRO).fillna('Other')
+                dist = raw_recent.groupby('Macro')[order_col].nunique().reset_index().rename(columns={order_col:'Orders'})
                 
                 c1, c2 = st.columns(2)
-                with c1: 
-                    st.altair_chart(alt.Chart(dist).mark_arc(innerRadius=50).encode(theta='Orders', color='Macro'), use_container_width=True)
+                with c1: st.altair_chart(alt.Chart(dist).mark_arc(innerRadius=50).encode(theta='Orders', color='Macro'), use_container_width=True)
                 with c2: 
                     dist['%'] = (dist['Orders'] / dist['Orders'].sum()) * 100
                     dist['Percentage'] = dist['%'].apply(lambda x: f"{x:.1f}%")
                     st.dataframe(dist[['Macro', 'Orders', 'Percentage']].sort_values(by='Orders', ascending=False), hide_index=True)
+                
+                st.divider()
+                st.markdown(f"#### 📍 Cost & Orders by Location")
+                raw_recent['Match_Loc'] = raw_recent[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
+                loc_counts = raw_recent[raw_recent['Match_Loc'] != ""].groupby('Match_Loc')[order_col].nunique().reset_index().rename(columns={order_col:'Orders'})
+                df_final = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left').fillna(0)
+                df_display = df_final[['Location', 'Orders', 'Shipping Cost']].sort_values(by="Shipping Cost", ascending=False).copy()
+                df_display['Shipping Cost'] = df_display['Shipping Cost'].apply(lambda x: f"{cur}{x:,.2f}")
+                st.dataframe(df_display, hide_index=True, use_container_width=True)
+                
+                st.divider()
+                st.markdown(f"#### 🏆 YTD Top 3 Destinations")
+                raw_ytd = raw_valid[raw_valid['ParsedDate'].dt.year == curr_y].copy()
+                raw_ytd['Match_Loc'] = raw_ytd[4].apply(extract_state).apply(lambda x: normalize_loc(x, reg_3pl))
+                ytd_counts = raw_ytd[raw_ytd['Match_Loc'] != ""].groupby('Match_Loc')[order_col].nunique().reset_index()
+                if not ytd_counts.empty:
+                    ytd_counts['%'] = (ytd_counts[order_col] / ytd_counts[order_col].sum()) * 100
+                    top3 = ytd_counts.nlargest(3, order_col).copy()
+                    top3['Location'] = top3['Match_Loc'].str.title()
+                    top3['Percentage'] = top3['%'].apply(lambda x: f"{x:.1f}%")
+                    st.dataframe(top3[['Location', 'Percentage']], hide_index=True, use_container_width=True)
+
             else:
-                raw['Country'] = raw[14].apply(lambda x: normalize_loc(x, reg_3pl))
-                dist = raw.groupby('Country')[order_col].nunique().reset_index().rename(columns={order_col:'Orders'})
-                dist = dist[dist['Country'] != ""] # Remove blanks
-                st.dataframe(dist.sort_values(by='Orders', ascending=False), hide_index=True, use_container_width=True)
-        except: st.error("Shipping distribution data error.")
+                # EU specific logic
+                st.divider()
+                st.markdown(f"#### 📍 Cost & Orders by Country")
+                raw_recent['Match_Loc'] = raw_recent[14].apply(lambda x: normalize_loc(x, reg_3pl))
+                loc_counts = raw_recent[raw_recent['Match_Loc'] != ""].groupby('Match_Loc')[order_col].nunique().reset_index().rename(columns={order_col:'Orders'})
+                df_final = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left').fillna(0)
+                df_display = df_final[['Location', 'Orders', 'Shipping Cost']].sort_values(by="Shipping Cost", ascending=False).copy()
+                df_display['Shipping Cost'] = df_display['Shipping Cost'].apply(lambda x: f"{cur}{x:,.2f}")
+                st.dataframe(df_display, hide_index=True, use_container_width=True)
+
+        except Exception as e: st.error(f"Shipping analysis error: {e}")
 
 # --- END OF FILE ---
