@@ -23,7 +23,6 @@ GIDS_ORIG = {"🇺🇸 US": "1304392959", "🇨🇦 CA": "634720426", "🇬🇧 
 GIDS_AMZ = {"🇺🇸 US": "1758192113", "🇨🇦 CA": "297394922", "🇬🇧 UK": "1202968115", "🇦🇺 AU": "1435942430"}
 GID_3PL_SUMMARY = "972554877" 
 
-# Mapping for 3PL Summary Sheet Columns
 SUMMARY_COLS = {
     "🇺🇸 US": {"fulfill": 1, "shipping": 2, "storage": 3},
     "🇨🇦 CA": {"fulfill": 4, "shipping": 5, "storage": 6},
@@ -67,10 +66,12 @@ if page == "📦 Inventory & Risk":
     c_oos, c_low = st.columns(2)
     with c_oos:
         st.subheader("🔴 Out of Stock (OOS)")
-        st.dataframe(s_df[s_df["Stock"] == 0], hide_index=True, use_container_width=True)
+        oos_df = s_df[s_df["Stock"] == 0].copy()
+        st.dataframe(oos_df, hide_index=True, use_container_width=True)
     with c_low:
         st.subheader("🟡 Low Stock Warning (<50)")
-        st.dataframe(s_df[(s_df["Stock"] > 0) & (s_df["Stock"] < 50)].sort_values(by="Stock"), hide_index=True, use_container_width=True)
+        low_stock_df = s_df[(s_df["Stock"] > 0) & (s_df["Stock"] < 50)].copy()
+        st.dataframe(low_stock_df.sort_values(by="Stock"), hide_index=True, use_container_width=True)
 
 # --- 2. SALES PERFORMANCE ---
 elif page == "💰 Sales Performance":
@@ -88,39 +89,45 @@ elif page == "💰 Sales Performance":
         df['clean_date'] = pd.to_datetime(df[d_col], errors='coerce').dt.date
         df = df[df[s_col].apply(is_valid_sku)]
         df['quantity'] = pd.to_numeric(df[q_col], errors='coerce').fillna(0)
-        df = df[df['quantity'] > 0] 
-
-        # Strict Window
+        
         target_start, target_end = datetime(2026, 4, 27).date(), datetime(2026, 5, 3).date()
-        st.info(f"📅 **Confirmed Window:** April 27 to May 3")
+        st.info(f"📅 **Audit Window:** April 27 to May 3")
         
         curr_w = df[(df['clean_date'] >= target_start) & (df['clean_date'] <= target_end)]
         prev_w = df[(df['clean_date'] >= (target_start - timedelta(7))) & (df['clean_date'] <= (target_start - timedelta(1)))]
         
-        c_sum = curr_w.groupby(s_col)['quantity'].sum().reset_index()
-        p_sum = prev_w.groupby(s_col)['quantity'].sum().reset_index()
-        res = pd.merge(c_sum, p_sum, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
-        
-        m1, m2 = st.columns(2)
-        with m1:
-            val = res[res[s_col].apply(is_cam)]['quantity_C'].sum()
-            st.metric("📸 Camera Units (Weekly)", f"{int(val)}", delta=int(val - res[res[s_col].apply(is_cam)]['quantity_P'].sum()))
-        with m2:
-            val = res[~res[s_col].apply(is_cam)]['quantity_C'].sum()
-            st.metric("🎒 Accessory Units (Weekly)", f"{int(val)}", delta=int(val - res[~res[s_col].apply(is_cam)]['quantity_P'].sum()))
+        if curr_w.empty:
+            st.warning("⚠️ No sales data found for the current weekly window.")
+            m1, m2 = st.columns(2)
+            m1.metric("📸 Cameras", "0")
+            m2.metric("🎒 Accessories", "0")
+        else:
+            c_sum = curr_w.groupby(s_col)['quantity'].sum().reset_index()
+            p_sum = prev_w.groupby(s_col)['quantity'].sum().reset_index()
+            res = pd.merge(c_sum, p_sum, on=s_col, how='outer', suffixes=('_C', '_P')).fillna(0)
+            
+            m1, m2 = st.columns(2)
+            with m1:
+                val = res[res[s_col].apply(is_cam)]['quantity_C'].sum()
+                st.metric("📸 Camera Units (Weekly)", f"{int(val)}", delta=int(val - res[res[s_col].apply(is_cam)]['quantity_P'].sum()))
+            with m2:
+                val = res[~res[s_col].apply(is_cam)]['quantity_C'].sum()
+                st.metric("🎒 Accessory Units (Weekly)", f"{int(val)}", delta=int(val - res[~res[s_col].apply(is_cam)]['quantity_P'].sum()))
 
-        # YTD RANKINGS (TOP & BOTTOM)
         st.divider()
         st.subheader(f"🏆 YTD {target_end.year} Rankings")
         ytd_sums = df[pd.to_datetime(df['clean_date']).dt.year == target_end.year].groupby(s_col)['quantity'].sum().reset_index()
         
         col_top, col_bot = st.columns(2)
-        with col_top:
-            st.markdown("#### 🥇 Top 5 Sellers")
-            st.dataframe(ytd_sums.nlargest(5, 'quantity').rename(columns={s_col:'SKU', 'quantity':'Units'}), hide_index=True)
-        with col_bot:
-            st.markdown("#### 📉 Bottom 5 Sellers")
-            st.dataframe(ytd_sums.nsmallest(5, 'quantity').rename(columns={s_col:'SKU', 'quantity':'Units'}), hide_index=True)
+        if not ytd_sums.empty:
+            with col_top:
+                st.markdown("#### 🥇 Top 5 Sellers")
+                st.dataframe(ytd_sums.nlargest(5, 'quantity').rename(columns={s_col:'SKU', 'quantity':'Units'}), hide_index=True)
+            with col_bot:
+                st.markdown("#### 📉 Bottom 5 Sellers")
+                st.dataframe(ytd_sums.nsmallest(5, 'quantity').rename(columns={s_col:'SKU', 'quantity':'Units'}), hide_index=True)
+        else:
+            st.info("No YTD data available.")
 
     except Exception as e: st.error(f"Sales error: {e}")
 
@@ -135,7 +142,6 @@ elif page == "🚚 3PL Costs & Logistics":
         df_sum.columns = range(df_sum.shape[1])
         df_sum[0] = pd.to_datetime(df_sum[0], errors='coerce')
         df_sum = df_sum.dropna(subset=[0])
-        
         cols = SUMMARY_COLS[reg_3pl]
         for c in [cols["fulfill"], cols["shipping"], cols["storage"]]:
             df_sum[c] = pd.to_numeric(df_sum[c].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
