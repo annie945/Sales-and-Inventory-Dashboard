@@ -86,21 +86,26 @@ elif page == "💰 Sales Performance":
         q_col = next(c for c in df.columns if 'qty' in c or 'quantity' in c)
         d_col = next(c for c in df.columns if 'date' in c)
         
+        # IMPROVED DATE HANDLING: Standardize all dates to YYYY-MM-DD
         df['clean_date'] = pd.to_datetime(df[d_col], errors='coerce').dt.date
         df = df[df[s_col].apply(is_valid_sku)]
         df['quantity'] = pd.to_numeric(df[q_col], errors='coerce').fillna(0)
         
-        target_start, target_end = datetime(2026, 4, 27).date(), datetime(2026, 5, 3).date()
-        st.info(f"📅 **Audit Window:** April 27 to May 3")
+        target_start = datetime(2026, 4, 27).date()
+        target_end = datetime(2026, 5, 3).date()
         
-        curr_w = df[(df['clean_date'] >= target_start) & (df['clean_date'] <= target_end)]
-        prev_w = df[(df['clean_date'] >= (target_start - timedelta(7))) & (df['clean_date'] <= (target_start - timedelta(1)))]
+        st.info(f"📊 **Data Range:** {target_start} to {target_end}")
+        
+        # Use .isin for multiple days to be extremely safe
+        week_range = pd.date_range(target_start, target_end).date
+        prev_range = pd.date_range(target_start - timedelta(7), target_start - timedelta(1)).date
+        
+        curr_w = df[df['clean_date'].isin(week_range)]
+        prev_w = df[df['clean_date'].isin(prev_range)]
         
         if curr_w.empty:
-            st.warning("⚠️ No sales data found for the current weekly window.")
-            m1, m2 = st.columns(2)
-            m1.metric("📸 Cameras", "0")
-            m2.metric("🎒 Accessories", "0")
+            st.warning("⚠️ No data found. Please check if the Google Sheet has entries for this date range.")
+            st.write(f"Last date found in sheet: {df['clean_date'].max()}")
         else:
             c_sum = curr_w.groupby(s_col)['quantity'].sum().reset_index()
             p_sum = prev_w.groupby(s_col)['quantity'].sum().reset_index()
@@ -109,10 +114,10 @@ elif page == "💰 Sales Performance":
             m1, m2 = st.columns(2)
             with m1:
                 val = res[res[s_col].apply(is_cam)]['quantity_C'].sum()
-                st.metric("📸 Camera Units (Weekly)", f"{int(val)}", delta=int(val - res[res[s_col].apply(is_cam)]['quantity_P'].sum()))
+                st.metric("📸 Camera Units", f"{int(val)}", delta=int(val - res[res[s_col].apply(is_cam)]['quantity_P'].sum()))
             with m2:
                 val = res[~res[s_col].apply(is_cam)]['quantity_C'].sum()
-                st.metric("🎒 Accessory Units (Weekly)", f"{int(val)}", delta=int(val - res[~res[s_col].apply(is_cam)]['quantity_P'].sum()))
+                st.metric("🎒 Accessory Units", f"{int(val)}", delta=int(val - res[~res[s_col].apply(is_cam)]['quantity_P'].sum()))
 
         st.divider()
         st.subheader(f"🏆 YTD {target_end.year} Rankings")
@@ -126,10 +131,8 @@ elif page == "💰 Sales Performance":
             with col_bot:
                 st.markdown("#### 📉 Bottom 5 Sellers")
                 st.dataframe(ytd_sums.nsmallest(5, 'quantity').rename(columns={s_col:'SKU', 'quantity':'Units'}), hide_index=True)
-        else:
-            st.info("No YTD data available.")
 
-    except Exception as e: st.error(f"Sales error: {e}")
+    except Exception as e: st.error(f"Sales window error: {e}")
 
 # --- 3. 3PL LOGISTICS ---
 elif page == "🚚 3PL Costs & Logistics":
