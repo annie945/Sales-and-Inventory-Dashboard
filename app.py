@@ -56,8 +56,14 @@ def extract_state(val):
 
 def is_valid_sku(s):
     s = str(s).upper().strip()
-    if any(x in s for x in ["NAN", "", "TOTAL", "HEALTH", "RISK", "SHIPPING"]): return False
-    return any(x in s for x in ["MA-","MC-","MK-","MP-","MV-","MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"])
+    # FIXED: Handled empty strings explicitly so they don't break the 'in' function
+    if not s or s == "NAN": return False
+    
+    noise = ["TOTAL", "HEALTH", "RISK", "SHIPPING", "PROTECTION"]
+    if any(x in s for x in noise): return False
+    
+    valid_prefixes = ["MA-","MC-","MK-","MP-","MV-","MICROSD","TML-","BAG-","LANYARD", "PAPER", "MP2-"]
+    return any(x in s for x in valid_prefixes)
 
 def is_cam(s):
     s = str(s).upper().strip()
@@ -107,10 +113,14 @@ if page == "📦 Inventory & Risk":
     c1, c2 = st.columns(2)
     with c1: 
         st.subheader("🔴 Out of Stock (OOS)")
-        st.dataframe(s_df[s_df["Stock"]==0], hide_index=True)
+        oos_items = s_df[s_df["Stock"]==0]
+        if not oos_items.empty: st.dataframe(oos_items, hide_index=True)
+        else: st.success("✅ Fully Stocked")
     with c2: 
         st.subheader("🟡 Low Stock (<50)")
-        st.dataframe(s_df[(s_df["Stock"]>0)&(s_df["Stock"]<50)].sort_values(by="Stock"), hide_index=True)
+        low_items = s_df[(s_df["Stock"]>0)&(s_df["Stock"]<50)].sort_values(by="Stock")
+        if not low_items.empty: st.dataframe(low_items, hide_index=True)
+        else: st.success("✅ All items > 50 units")
     
     st.divider()
     st.subheader("📋 Full Inventory List")
@@ -174,7 +184,6 @@ elif page == "💰 Sales Performance":
                 st.dataframe(recon.nlargest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Units'}), hide_index=True, use_container_width=True)
             with c2: 
                 st.error("📉 Bottom 5 Weekly Sellers")
-                # Filter out 0s so bottom 5 shows actual slow movers, not just missing items
                 bottom_week = recon[recon['quantity_C'] > 0]
                 st.dataframe(bottom_week.nsmallest(5, 'quantity_C')[[s_col, 'quantity_C']].rename(columns={s_col:'SKU', 'quantity_C':'Units'}), hide_index=True, use_container_width=True)
 
