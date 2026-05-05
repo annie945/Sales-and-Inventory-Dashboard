@@ -84,7 +84,7 @@ def normalize_loc(s, reg):
     s = str(s).lower().strip()
     if s == 'nan' or s == '': return ""
     if reg == "🇪🇺 EU":
-        eu_map = {'de':'germany', 'fr':'france', 'it':'italy', 'es':'spain', 'nl':'netherlands', 'be':'belgium', 'at':'austria', 'pl':'poland', 'se':'sweden', 'dk':'denmark', 'fi':'finland', 'pt':'portugal', 'ie':'ireland', 'gr':'greece', 'cz':'czech republic', 'ro':'romania', 'hu':'hungary', 'bg':'bulgaria', 'sk':'slovakia', 'hr':'croatia', 'si':'slovenia', 'ee':'estonia', 'lv':'latvia', 'lt':'lithuania', 'cy':'cyprus', 'mt':'malta', 'lu':'luxembourg', 'ch':'switzerland', 'no':'norway', 'gb':'united kingdom', 'uk':'united kingdom', 'fra':'france', 'deu':'germany', 'ita':'italy', 'esp':'spain', 'nld':'netherlands', 'gbr':'united kingdom'}
+        eu_map = {'de':'germany', 'fr':'france', 'it':'italy', 'es':'spain', 'nl':'netherlands', 'be':'belgium', 'at':'austria', 'pl':'poland', 'se':'sweden', 'dk':'denmark', 'fi':'finland', 'pt':'portugal', 'ie':'ireland', 'gr':'greece', 'cz':'czech republic', 'ro':'romania', 'hu':'hungry', 'bg':'bulgaria', 'sk':'slovakia', 'hr':'croatia', 'si':'slovenia', 'ee':'estonia', 'lv':'latvia', 'lt':'lithuania', 'cy':'cyprus', 'mt':'malta', 'lu':'luxembourg', 'ch':'switzerland', 'no':'norway', 'gb':'united kingdom', 'uk':'united kingdom', 'fra':'france', 'deu':'germany', 'ita':'italy', 'esp':'spain', 'nld':'netherlands', 'gbr':'united kingdom'}
         if s in eu_map: return eu_map[s]
         for name in eu_map.values():
             if name in s: return name
@@ -236,7 +236,10 @@ elif page == "🚚 3PL Costs & Logistics":
             monthly_trend = valid_months_df.copy().iloc[::-1]
             monthly_trend.columns = ['Fulfillment', 'Shipping', 'Storage']
             monthly_trend.index = monthly_trend.index.astype(str)
-            st.dataframe(monthly_trend.applymap(lambda x: f"{cur}{x:,.2f}"), use_container_width=True)
+            formatted_df = monthly_trend.copy()
+            for col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{cur}{x:,.2f}")
+            st.dataframe(formatted_df, use_container_width=True)
         except Exception as e: st.error(f"Summary data error: {e}")
 
     if t_ship:
@@ -247,8 +250,9 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_slice = df_states_raw.iloc[1:].copy()
                 month_col_idx = curr_m
                 df_slice[month_col_idx] = df_slice[month_col_idx].apply(clean_currency)
+                # Keep numeric for merging, format only at the end
                 df_filtered = df_slice[(df_slice[month_col_idx] > 0) & (~df_slice[0].astype(str).str.lower().str.contains("total"))].copy()
-                df_filtered.columns = ["Location", "Shipping Cost"] + list(df_filtered.columns[2:])
+                df_filtered = df_filtered[[0, month_col_idx]].rename(columns={0: "Location", month_col_idx: "Shipping Cost"})
                 df_filtered["Match_Loc"] = df_filtered["Location"].apply(lambda x: normalize_loc(x, reg_3pl))
                 
                 df_raw = load_csv(THREE_PL_SHEET_ID, GIDS_RAW_SHIPPING[reg_3pl]); df_raw.columns = range(df_raw.shape[1])
@@ -257,7 +261,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_raw_valid = df_raw.dropna(subset=['ParsedDate']).copy()
                 df_raw_recent = df_raw_valid[(df_raw_valid['ParsedDate'].dt.month == curr_m) & (df_raw_valid['ParsedDate'].dt.year == curr_y)].copy()
                 
-                order_col, carrier_col = (12, 15) if reg_3pl == "🇪🇺 EU" else (2, 6)
+                order_col = 12 if reg_3pl == "🇪🇺 EU" else 2
                 total_orders = df_raw_recent[order_col].nunique()
                 st.markdown(f"#### 📊 Order Metrics ({most_recent_ym.strftime('%B %Y')})")
                 st.metric("Orders Shipped", f"{total_orders:,}")
@@ -270,7 +274,7 @@ elif page == "🚚 3PL Costs & Logistics":
                     reg_counts.columns = ['Region', 'Orders']; reg_counts['%'] = (reg_counts['Orders']/reg_counts['Orders'].sum())*100
                     c1, c2 = st.columns(2)
                     with c1: st.altair_chart(alt.Chart(reg_counts).mark_arc(innerRadius=50).encode(theta='Orders', color='Region'), use_container_width=True)
-                    with c2: st.dataframe(reg_counts.assign(Percentage=lambda x: x['%'].map("{:.1f}%".format))[['Region', 'Percentage']], hide_index=True, use_container_width=True)
+                    with c2: st.dataframe(reg_counts.assign(Percentage=lambda x: f"{x['%']:.1f}%")[['Region', 'Percentage']], hide_index=True, use_container_width=True)
 
                 st.divider(); st.markdown(f"#### 📍 {reg_3pl} Cost & Orders by Location")
                 if reg_3pl == "🇪🇺 EU": df_raw_recent['Match_Loc'] = df_raw_recent[df_raw_recent[6].astype(str).str.lower().str.contains('shipping')][14].apply(lambda x: normalize_loc(x, reg_3pl))
@@ -279,7 +283,10 @@ elif page == "🚚 3PL Costs & Logistics":
                 loc_counts = df_raw_recent[df_raw_recent['Match_Loc'] != ""].groupby('Match_Loc')[order_col].nunique().reset_index()
                 loc_counts.columns = ['Match_Loc', 'Orders']
                 df_final = pd.merge(df_filtered, loc_counts, on='Match_Loc', how='left').fillna(0)
-                st.dataframe(df_final[['Location', 'Orders', 'Shipping Cost']].sort_values(by="Shipping Cost", ascending=False).assign(**{'Shipping Cost': lambda x: x['Shipping Cost'].apply(lambda y: f"{cur}{y:,.2f}")}), hide_index=True, use_container_width=True)
+                # Final formatting for display
+                df_display = df_final[['Location', 'Orders', 'Shipping Cost']].sort_values(by="Shipping Cost", ascending=False).copy()
+                df_display['Shipping Cost'] = df_display['Shipping Cost'].apply(lambda x: f"{cur}{x:,.2f}")
+                st.dataframe(df_display, hide_index=True, use_container_width=True)
 
                 st.divider(); st.markdown(f"#### 🏆 YTD {curr_y} Top 3 Destinations")
                 df_raw_ytd = df_raw_valid[df_raw_valid['ParsedDate'].dt.year == curr_y].copy()
@@ -288,7 +295,7 @@ elif page == "🚚 3PL Costs & Logistics":
                 df_raw_ytd['Match_Loc'] = df_raw_ytd[loc_col_idx].apply(extract_state if reg_3pl != "🇪🇺 EU" else lambda x: x).apply(lambda x: normalize_loc(x, reg_3pl))
                 ytd_counts = df_raw_ytd[df_raw_ytd['Match_Loc'] != ""].groupby('Match_Loc')[order_col].nunique().reset_index()
                 ytd_counts['%'] = (ytd_counts[order_col]/ytd_counts[order_col].sum())*100
-                st.dataframe(ytd_counts.nlargest(3, order_col).assign(Location=lambda x: x['Match_Loc'].str.title(), Percentage=lambda x: x['%'].map("{:.1f}%".format))[['Location', 'Percentage']], hide_index=True, use_container_width=True)
+                st.dataframe(ytd_counts.nlargest(3, order_col).assign(Location=lambda x: x['Match_Loc'].str.title(), Percentage=lambda x: f"{x['%']:.1f}%")[['Location', 'Percentage']], hide_index=True, use_container_width=True)
             except Exception as e: st.error(f"Shipping analysis error: {e}")
 
 # --- SALES PERFORMANCE ---
